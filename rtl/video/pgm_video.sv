@@ -162,10 +162,10 @@ always @(posedge clk) begin
                         end else begin
                             px_sub_cnt <= px_sub_cnt + 1'd1;
                         end
-                        end
-                    end // Close active_sprites logic
+                    end // Close ddram_busy
+                end // Close active_sprites logic
                 
-                // Transition Check (Now outside the active loop)
+                // Transition Check
                 if (curr_sprite_idx == active_sprites_count) begin
                     ddram_rd <= 0;
                     sprite_state <= WAIT_START;
