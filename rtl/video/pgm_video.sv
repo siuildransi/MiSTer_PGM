@@ -9,19 +9,22 @@ module pgm_video (
     input      [15:0] pal_dout,
     input      [15:0] vregs [0:31],
 
+    // SDRAM (Graphic Data)
+    output reg        ddram_rd,
+    output reg [28:0] ddram_addr,
+    input      [63:0] ddram_dout,
+    input             ddram_busy,
+
     // Video Output
-    output        hs,
-    output        vs,
-    output [7:0]  r,
-    output [7:0]  g,
-    output [7:0]  b,
-    output        blank_n
+    output reg        hs,
+    output reg        vs,
+    output reg [7:0]  r,
+    output reg [7:0]  g,
+    output reg [7:0]  b,
+    output reg        blank_n
 );
 
-// PGM Native Resolution: 448x224
-// We'll use a 25.175MHz (VGA) or similar for now, but PGM uses specific clocks.
-// For now, let's stick to the 640x480 timing but center the PGM 448x224 image.
-
+// PGM Timings: 448x224 (centered in 640x480 for now)
 reg [9:0] h_cnt;
 reg [9:0] v_cnt;
 
@@ -38,35 +41,67 @@ always @(posedge clk) begin
     end
 end
 
-assign hs = ~(h_cnt >= 656 && h_cnt < 752);
-assign vs = ~(v_cnt >= 490 && v_cnt < 492);
-assign blank_n = (h_cnt < 640 && v_cnt < 480);
+// Signals
+wire hs_w = ~(h_cnt >= 656 && h_cnt < 752);
+wire vs_w = ~(v_cnt >= 490 && v_cnt < 492);
+wire blank_n_w = (h_cnt < 640 && v_cnt < 480);
 
-// --- Tilemap Fetching Logic (Simplistic Start) ---
-// PGM Tile Maps:
-// Background: 64x32 tiles (8x8 pixels each) = 512x256 pixels
-// Or 128x32. Let's assume 64x32 for now.
-
-wire [9:0] x = h_cnt;
-wire [9:0] y = v_cnt;
-
-// Offset to center 448x224 in 640x480
-wire [9:0] px = x - 10'd96;
-wire [9:0] py = y - 10'd128;
-wire active = (x >= 96 && x < 544 && y >= 128 && y < 352);
-
-// Calculate tile address
-// Each tile is 8x8 pixels.
-// tile_x = px / 8, tile_y = py / 8
-// addr = tile_y * 64 + tile_x
-always @(*) begin
-    vram_addr = {py[7:3], px[8:3]}; // Simplistic mapping
-    pal_addr = vram_dout[11:0];      // Placeholder for palette index
+always @(posedge clk) begin
+    hs <= hs_w;
+    vs <= vs_w;
+    blank_n <= blank_n_w;
 end
 
-// Output
-assign r = active ? pal_dout[15:11] << 3 : 8'h00;
-assign g = active ? pal_dout[10:5]  << 2 : 8'h00;
-assign b = active ? pal_dout[4:0]   << 3 : 8'h00;
+// --- Tilemap Rendering State Machine ---
+// Fetching sequence:
+// 1. Calculate Tile Address in VRAM
+// 2. Fetch Tile ID from VRAM
+// 3. Calculate SDRAM address for bitplanes
+// 4. Request SDRAM data
+// 5. Latch data for 8 or 16 pixels
+
+wire [9:0] px = h_cnt - 10'd96;
+wire [9:0] py = v_cnt - 10'd128;
+wire active = (h_cnt >= 96 && h_cnt < 544 && v_cnt >= 128 && v_cnt < 352);
+
+reg [15:0] tile_data_latch;
+reg [2:0]  pixel_idx;
+
+always @(posedge clk) begin
+    if (reset) begin
+        ddram_rd <= 0;
+        vram_addr <= 0;
+    end else if (active) begin
+        // Simple state machine based on h_cnt[2:0]
+        case (h_cnt[2:0])
+            3'd0: begin
+                vram_addr <= {py[7:3], px[8:3]}; // VRAM lookup for tile index
+            end
+            3'd2: begin
+                // Calculate SDRAM address (Tile ID * bits per tile)
+                // PGM tiles are 16x16, 5bpp usually.
+                ddram_addr <= {vram_dout[11:0], py[3:0], 1'b0}; 
+                ddram_rd <= 1;
+            end
+            3'd4: begin
+                ddram_rd <= 0;
+                if (!ddram_busy) tile_data_latch <= ddram_dout[15:0]; // Placeholder
+            end
+        endcase
+    end
+end
+
+// Color Output
+always @(posedge clk) begin
+    if (!active) begin
+        r <= 0; g <= 0; b <= 0;
+    end else begin
+        // Use tile_data_latch to pick a color
+        // For now, just a gradient based on the latch to verify fetching
+        r <= tile_data_latch[15:11] << 3;
+        g <= tile_data_latch[10:5]  << 2;
+        b <= tile_data_latch[4:0]   << 3;
+    end
+end
 
 endmodule

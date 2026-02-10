@@ -132,6 +132,12 @@ pgm_video video_gen (
     .pal_dout(pal_dout),
     .vregs(vregs),
 
+    // SDRAM (Graphic Data)
+    .ddram_rd(DDRAM_RD),
+    .ddram_addr(DDRAM_ADDR),
+    .ddram_dout(DDRAM_DOUT),
+    .ddram_busy(DDRAM_BUSY),
+
     .hs(hs),
     .vs(vs),
     .r(r),
