@@ -19,11 +19,12 @@ module emu (
     input         HDMI_BLACKOUT,
     input         HDMI_BOB_DEINT,
 
-    input         CLK_VIDEO,
-    input         CE_PIXEL,
-    input  [1:0]  VGA_SL,
-    input  [8:0]  VIDEO_ARX,
-    input  [8:0]  VIDEO_ARY,
+    // CLK_VIDEO/CE_PIXEL/VGA_SL/VIDEO_ARX/ARY are OUTPUTS from core to framework
+    output        CLK_VIDEO,
+    output        CE_PIXEL,
+    output [1:0]  VGA_SL,
+    output [12:0] VIDEO_ARX,
+    output [12:0] VIDEO_ARY,
 
     input         CLK_AUDIO,
     output [15:0] AUDIO_L,
@@ -103,6 +104,30 @@ hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;
     .status(status)
 );
 
+// --- Clocks ---
+// Video clock: use 50MHz divided for ~25MHz pixel clock (640x480@60Hz)
+reg clk_vid;
+always @(posedge CLK_50M) clk_vid <= ~clk_vid;
+
+assign CLK_VIDEO = clk_vid;
+assign CE_PIXEL  = 1'b1;      // Every video clock cycle is a pixel
+assign VGA_SL    = 2'b00;     // No scanlines
+assign VIDEO_ARX = 13'd4;     // 4:3 aspect ratio
+assign VIDEO_ARY = 13'd3;
+
+// --- CPU Clocks ---
+// 68k: ~20 MHz (50/2 = 25, close enough for skeleton)
+wire clk_20m;
+reg [1:0] div20;
+always @(posedge CLK_50M) div20 <= div20 + 2'd1;
+assign clk_20m = div20[1];
+
+// Z80: ~8 MHz (50/6 ≈ 8.3 MHz)
+wire clk_8m;
+reg [2:0] div8;
+always @(posedge CLK_50M) div8 <= div8 + 3'd1;
+assign clk_8m = div8[2];
+
 // --- PGM Core (minimal — CPUs only) ---
 wire [15:0] sample_l, sample_r;
 
@@ -124,11 +149,11 @@ assign AUDIO_R = sample_r;
 assign AUDIO_S = 1'b0;
 assign AUDIO_MIX = 2'b00;
 
-// --- Minimal Video Output (test pattern / blank) ---
+// --- Minimal Video (blank dark screen with sync) ---
 reg [9:0] h_cnt;
 reg [9:0] v_cnt;
 
-always @(posedge CLK_50M) begin
+always @(posedge clk_vid) begin
     if (RESET) begin
         h_cnt <= 0;
         v_cnt <= 0;
@@ -143,9 +168,9 @@ end
 
 wire active = (h_cnt < 640 && v_cnt < 480);
 
-assign VGA_R = active ? 8'h10 : 8'h00;
-assign VGA_G = active ? 8'h10 : 8'h00;
-assign VGA_B = active ? 8'h30 : 8'h00;
+assign VGA_R  = active ? 8'h10 : 8'h00;
+assign VGA_G  = active ? 8'h10 : 8'h00;
+assign VGA_B  = active ? 8'h30 : 8'h00;
 assign VGA_HS = ~(h_cnt >= 656 && h_cnt < 752);
 assign VGA_VS = ~(v_cnt >= 490 && v_cnt < 492);
 assign VGA_DE = active;
@@ -153,11 +178,11 @@ assign VGA_F1 = 1'b0;
 assign VGA_SCALER = 2'b00;
 assign VGA_DISABLE = 1'b0;
 
+// --- Defaults ---
 assign LED_USER  = 8'h00;
 assign LED_POWER = 8'h01;
 assign LED_DISK  = 8'h00;
 
-// Unused interfaces
 assign SDRAM_A    = 13'h0;
 assign SDRAM_BA   = 2'b00;
 assign SDRAM_DQML = 1'b1;
@@ -186,15 +211,5 @@ assign UART_TXD = 1'b1;
 assign UART_DTR = 1'b1;
 
 assign USER_OUT = 6'b000000;
-
-// --- Clocks ---
-wire clk_20m, clk_8m;
-reg [1:0] div20;
-always @(posedge CLK_50M) div20 <= div20 + 2'd1;
-assign clk_20m = div20[1];
-
-reg [2:0] div8;
-always @(posedge CLK_50M) div8 <= div8 + 3'd1;
-assign clk_8m = div8[2];
 
 endmodule
