@@ -16,7 +16,7 @@ module pgm_video (
     output reg [28:0] ddram_addr,
     input      [63:0] ddram_dout,
     input             ddram_busy,
-    input             ddram_dout_ready, // Added
+    input             ddram_dout_ready, 
 
     // Video Output
     output reg        hs,
@@ -27,56 +27,26 @@ module pgm_video (
     output reg        blank_n
 );
 
-// PGM Timings: 448x224 (centered in 640x480 for now)
-reg [9:0] h_cnt;
-reg [9:0] v_cnt;
-
-always @(posedge clk) begin
-    if (reset) begin
-        h_cnt <= 0;
-        v_cnt <= 0;
-    end else begin
-        if (h_cnt == 799) begin
-            h_cnt <= 0;
-            if (v_cnt == 524) v_cnt <= 0;
-            else v_cnt <= v_cnt + 1'd1;
-        end else h_cnt <= h_cnt + 1'd1;
-    end
-end
-
-// Signals
-wire hs_w = ~(h_cnt >= 656 && h_cnt < 752);
-wire vs_w = ~(v_cnt >= 490 && v_cnt < 492);
-wire active = (h_cnt >= 96 && h_cnt < 544 && v_cnt >= 128 && v_cnt < 352);
-wire blank_n_w = active;
-
-reg hs_d1, vs_d1, blank_n_d1;
-
-always @(posedge clk) begin
-    // Stage 1
-    hs_d1 <= hs_w;
-    vs_d1 <= vs_w;
-    blank_n_d1 <= blank_n_w;
-    
-    // Stage 2 (Output)
-    hs <= hs_d1;
-    vs <= vs_d1;
-    blank_n <= blank_n_d1;
-end
-
-// --- Sprite Engine (Line Buffer Scanning) ---
-// Each word in A-ROM contains 3 pixels (5 bits each). 
-// Word: [P2:5, P1:5, P0:5, Ignored:1] -> This needs verification against MAME.
-// Typical PGM A-ROM packing: 3 pixels per 16-bit word.
-
+// --- Constants ---
 localparam SCAN_SPRITES  = 2'd0;
 localparam FETCH_SPRITES = 2'd1;
 localparam WAIT_START    = 2'd2;
 
+localparam TILE_IDLE  = 2'd0;
+localparam TILE_VRAM  = 2'd1;
+localparam TILE_SDRAM = 2'd2;
+
+// --- Registers and Internal Signals ---
+reg [9:0]  h_cnt;
+reg [9:0]  v_cnt;
+reg        hs_d1, vs_d1, blank_n_d1;
+
+// Sprite Engine Regs
 reg [1:0]  sprite_state;
 reg [9:0]  px_sub_cnt;
 reg [7:0]  curr_sprite_idx;
 reg [7:0]  active_sprites_count;
+reg [2:0]  sprite_attr_cnt;
 
 struct packed {
     logic [10:0] x;
@@ -88,24 +58,63 @@ struct packed {
     logic [7:0]  y_zoom;
 } line_sprites [0:31];
 
-// Pixel line buffer (Double Buffered)
-// Bank 0: Even Lines, Bank 1: Odd Lines
-// Bits [4:0]: Pixel index (0-31)
-// Bits [9:5]: Palette index (0-31)
 reg [9:0] line_buffer [0:1][0:447]; 
 
-wire        buf_wr = v_cnt[0];     // Write to current line index
-wire        buf_rd = ~v_cnt[0];    // Read from previous line index
+// Tile Engine Regs
+reg [1:0]  tile_state;
+reg [5:0]  tx_fetch_cnt; 
+reg [15:0] tx_tile_idx;
+reg [15:0] tx_tile_attr;
+reg        tx_attr_phase;
+reg [9:0]  tx_buffer [0:447]; 
+
+// --- Continuous Assignments (Muxes & Math) ---
+wire [15:0] bg_scrolly = vregs[(16+2)*16 +: 16]; // B02000
+wire [15:0] bg_scrollx = vregs[(16+3)*16 +: 16]; // B03000
+wire [15:0] tx_scrolly = vregs[(16+5)*16 +: 16]; // B05000
+wire [15:0] tx_scrollx = vregs[(16+6)*16 +: 16]; // B06000
+
+wire [9:0] px = h_cnt - 10'd96;
+wire [9:0] py = v_cnt - 10'd128;
+wire       active = (h_cnt >= 96 && h_cnt < 544 && v_cnt >= 128 && v_cnt < 352);
+wire       blank_n_w = active;
+
+wire        buf_wr = v_cnt[0];
+wire        buf_rd = ~v_cnt[0];
 wire [10:0] cur_fetch_x = line_sprites[curr_sprite_idx].x + {1'b0, px_sub_cnt};
 
-// --- SDRAM Bus Control (Single Driver Block) ---
+wire [4:0] tx_tile_line = (py + tx_scrolly[7:0]) & 8'h07;
+wire [8:0] tx_vram_row  = ((py + tx_scrolly) >> 3) & 8'h1F;
+
+// --- Timing Generator ---
+always @(posedge clk) begin
+    if (reset) begin
+        h_cnt <= 0; v_cnt <= 0;
+    end else begin
+        if (h_cnt == 799) begin
+            h_cnt <= 0;
+            if (v_cnt == 524) v_cnt <= 0;
+            else v_cnt <= v_cnt + 1'd1;
+        end else h_cnt <= h_cnt + 1'd1;
+    end
+end
+
+always @(posedge clk) begin
+    hs_d1 <= ~(h_cnt >= 656 && h_cnt < 752);
+    vs_d1 <= ~(v_cnt >= 490 && v_cnt < 492);
+    blank_n_d1 <= blank_n_w;
+    
+    hs <= hs_d1;
+    vs <= vs_d1;
+    blank_n <= blank_n_d1;
+end
+
+// --- SDRAM Bus Arbiter ---
 always @(posedge clk) begin
     if (reset) begin
         ddram_rd <= 1'b0;
         ddram_addr <= 0;
     end else begin
-        // Arbitration between Sprites and Tiles
-        // Priority: Sprites (more critical) > Tiles
         if (sprite_state == FETCH_SPRITES && active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
             if (!ddram_busy && !ddram_rd) begin
                 ddram_rd <= 1'b1;
@@ -126,19 +135,19 @@ always @(posedge clk) begin
     end
 end
 
-// --- Sprite Engine (State Machine only) ---
+// --- Sprite Engine State Machine ---
 always @(posedge clk) begin
     if (reset) begin
         sprite_state <= SCAN_SPRITES;
         curr_sprite_idx <= 0;
         active_sprites_count <= 0;
-        attr_cnt <= 0;
+        sprite_attr_cnt <= 0;
     end else begin
         case (sprite_state)
             SCAN_SPRITES: begin
                 if (h_cnt >= 640) begin
-                    sprite_addr <= {curr_sprite_idx, 2'b00} + attr_cnt[1:0];
-                    case (attr_cnt)
+                    sprite_addr <= {curr_sprite_idx, 2'b00} + sprite_attr_cnt[1:0];
+                    case (sprite_attr_cnt)
                         3'd1: line_sprites[active_sprites_count].x      <= sprite_dout[10:0];
                         3'd2: line_sprites[active_sprites_count].height <= sprite_dout[4:1];
                         3'd3: line_sprites[active_sprites_count].code   <= sprite_dout;
@@ -147,12 +156,12 @@ always @(posedge clk) begin
                             line_sprites[active_sprites_count].x_zoom <= sprite_dout[7:0];
                         end
                     endcase
-                    if (attr_cnt == 5) begin
+                    if (sprite_attr_cnt == 5) begin
                         if (active_sprites_count < 31) active_sprites_count <= active_sprites_count + 1'd1;
-                        attr_cnt <= 0;
+                        sprite_attr_cnt <= 0;
                         curr_sprite_idx <= curr_sprite_idx + 1'd1;
                         if (curr_sprite_idx == 255) sprite_state <= FETCH_SPRITES;
-                    end else attr_cnt <= attr_cnt + 1'd1;
+                    end else sprite_attr_cnt <= sprite_attr_cnt + 1'd1;
                 end
             end
             
@@ -173,14 +182,12 @@ always @(posedge clk) begin
                             4'd10: line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[57:53]};
                             4'd11: line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[62:58]};
                         endcase
-
                         if (px_sub_cnt == 11) begin
                             px_sub_cnt <= 0;
                             curr_sprite_idx <= curr_sprite_idx + 1'd1;
                         end else px_sub_cnt <= px_sub_cnt + 1'd1;
                     end
                 end 
-                
                 if (curr_sprite_idx == active_sprites_count) sprite_state <= WAIT_START;
             end
 
@@ -189,14 +196,14 @@ always @(posedge clk) begin
                     sprite_state <= SCAN_SPRITES;
                     curr_sprite_idx <= 0;
                     active_sprites_count <= 0;
-                    attr_cnt <= 0;
+                    sprite_attr_cnt <= 0;
                 end
             end
         endcase
     end
 end
 
-// --- Tile Fetcher State Machine (Parallel to Sprites) ---
+// --- Tile Engine State Machine ---
 always @(posedge clk) begin
     if (reset) begin
         tile_state <= TILE_IDLE;
@@ -230,7 +237,6 @@ always @(posedge clk) begin
                         tx_buffer[tx_fetch_cnt*8 + i] <= {tx_tile_attr[5:1], (tx_tile_line[0] ? 
                             ddram_dout[32 + i*4 +: 4] : ddram_dout[i*4 +: 4])};
                     end
-                    
                     if (tx_fetch_cnt == 55) tile_state <= TILE_IDLE;
                     else begin
                         tx_fetch_cnt <= tx_fetch_cnt + 1'd1;
@@ -242,10 +248,9 @@ always @(posedge clk) begin
     end
 end
 
-// Mixer & Layer Priority
+// --- Mixer & Layer Priority ---
 reg [9:0] sprite_data;
 reg [9:0] tx_p;
-reg [15:0] bg_placeholder;
 
 always @(posedge clk) begin
     if (!blank_n_w) begin
@@ -268,7 +273,7 @@ always @(posedge clk) begin
             g <= {pal_dout[9:5],   3'b0};
             b <= {pal_dout[4:0],   3'b0};
         end else begin
-            r <= 0; g <= 64; b <= 0; // Dark Green Background Placeholder
+            r <= 0; g <= 64; b <= 0;
         end
         
         line_buffer[buf_rd][px] <= 10'd0;
