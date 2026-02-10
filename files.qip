@@ -8,5 +8,7 @@ set_global_assignment -name VHDL_FILE rtl/cpu/T80/rtl/vhdl/T80_MCode.vhd
 set_global_assignment -name VHDL_FILE rtl/cpu/T80/rtl/vhdl/T80_ALU.vhd
 set_global_assignment -name VHDL_FILE rtl/cpu/T80/rtl/vhdl/T80_Reg.vhd
 set_global_assignment -name VHDL_FILE rtl/cpu/T80/rtl/vhdl/T80s.vhd
+set_global_assignment -name SYSTEMVERILOG_FILE emu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE PGM.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/pgm_video.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/ics2115.sv
