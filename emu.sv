@@ -152,7 +152,10 @@ PGM pgm_core (
     
     // DDRAM Interface
     .ddram_rd(DDRAM_RD),
+    .ddram_we(DDRAM_WE),
     .ddram_addr(DDRAM_ADDR),
+    .ddram_din(DDRAM_DIN),
+    .ddram_be(DDRAM_BE),
     .ddram_dout(DDRAM_DOUT),
     .ddram_busy(DDRAM_BUSY),
     
@@ -187,7 +190,7 @@ assign VGA_DE = core_blank;
 
 // Placeholder for logic removed
 wire unused_signals = &{1'b0};
-assign VGA_DE = active;
+// VGA_DE driven by core_blank above
 assign VGA_F1 = 1'b0;
 assign VGA_SCALER = 2'b00;
 assign VGA_DISABLE = 1'b0;
@@ -209,12 +212,12 @@ assign SDRAM_CLK  = 1'b0;
 assign SDRAM_CKE  = 1'b0;
 
 assign DDRAM_CLK      = 1'b0;
-assign DDRAM_ADDR     = 29'h0;
+// DDRAM_ADDR driven by PGM
 assign DDRAM_BURSTCNT = 4'h0;
-assign DDRAM_RD       = 1'b0;
-assign DDRAM_DIN      = 64'h0;
-assign DDRAM_BE       = 8'h0;
-assign DDRAM_WE       = 1'b0;
+// DDRAM_RD driven by PGM
+// DDRAM_DIN driven by PGM
+// DDRAM_BE driven by PGM
+// DDRAM_WE driven by PGM
 
 assign SD_SCK  = 1'b0;
 assign SD_MOSI = 1'b0;
