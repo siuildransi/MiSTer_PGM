@@ -166,7 +166,7 @@ always @(posedge clk) begin
                     end
                 end
                 
-                // Transition Check (Outside the active fetch loop to handle count=0 case)
+                // Transition Check (Must be INSIDE FETCH_SPRITES)
                 if (curr_sprite_idx == active_sprites_count) begin
                     ddram_rd <= 0;
                     sprite_state <= WAIT_START;
