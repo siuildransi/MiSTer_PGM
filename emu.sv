@@ -53,7 +53,7 @@ module emu (
     output        SDRAM_CLK,
     output        SDRAM_CKE,
 
-    // DDRAM (SDRAM for ROM data)
+    // DDRAM
     output        DDRAM_CLK,
     output [28:0] DDRAM_ADDR,
     output [3:0]  DDRAM_BURSTCNT,
@@ -103,33 +103,18 @@ hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;
     .status(status)
 );
 
-// --- PGM Core Logic ---
+// --- PGM Core (minimal — CPUs only) ---
 wire [15:0] sample_l, sample_r;
-wire hs, vs, blank_n;
-wire [7:0] r, g, b;
 
 PGM pgm_core (
     .fixed_20m_clk(clk_20m),
     .fixed_8m_clk(clk_8m),
     .reset(RESET || ioctl_download),
-
-    // ioctl
     .ioctl_download(ioctl_download),
     .ioctl_wr(ioctl_wr),
     .ioctl_addr(ioctl_addr),
     .ioctl_dout(ioctl_dout),
     .ioctl_index(ioctl_index),
-
-    // Video
-    .renderer_vram_addr(vram_addr),
-    .renderer_vram_dout(vram_dout),
-    .renderer_pal_addr(pal_addr),
-    .renderer_pal_dout(pal_dout),
-    .vregs_dout(vregs),
-    .sprite_ram_addr(sprite_addr),
-    .sprite_ram_dout(sprite_dout),
-
-    // Audio
     .sample_l(sample_l),
     .sample_r(sample_r)
 );
@@ -139,48 +124,31 @@ assign AUDIO_R = sample_r;
 assign AUDIO_S = 1'b0;
 assign AUDIO_MIX = 2'b00;
 
-// --- Video ---
-wire [13:1] vram_addr;
-wire [15:0] vram_dout;
-wire [12:1] pal_addr;
-wire [15:0] pal_dout;
-wire [511:0] vregs;
-wire [10:1] sprite_addr;
-wire [15:0] sprite_dout;
+// --- Minimal Video Output (test pattern / blank) ---
+reg [9:0] h_cnt;
+reg [9:0] v_cnt;
 
-pgm_video video_gen (
-    .clk(CLK_50M),
-    .reset(RESET),
+always @(posedge CLK_50M) begin
+    if (RESET) begin
+        h_cnt <= 0;
+        v_cnt <= 0;
+    end else begin
+        if (h_cnt == 799) begin
+            h_cnt <= 0;
+            if (v_cnt == 524) v_cnt <= 0;
+            else v_cnt <= v_cnt + 1'd1;
+        end else h_cnt <= h_cnt + 1'd1;
+    end
+end
 
-    // Video Data
-    .vram_addr(vram_addr),
-    .vram_dout(vram_dout),
-    .pal_addr(pal_addr),
-    .pal_dout(pal_dout),
-    .vregs(vregs),
-    .sprite_addr(sprite_addr),
-    .sprite_dout(sprite_dout),
+wire active = (h_cnt < 640 && v_cnt < 480);
 
-    // SDRAM (Graphic Data)
-    .ddram_rd(DDRAM_RD),
-    .ddram_addr(DDRAM_ADDR),
-    .ddram_dout(DDRAM_DOUT),
-    .ddram_busy(DDRAM_BUSY),
-
-    .hs(hs),
-    .vs(vs),
-    .r(r),
-    .g(g),
-    .b(b),
-    .blank_n(blank_n)
-);
-
-assign VGA_R = r;
-assign VGA_G = g;
-assign VGA_B = b;
-assign VGA_HS = hs;
-assign VGA_VS = vs;
-assign VGA_DE = blank_n;
+assign VGA_R = active ? 8'h10 : 8'h00;
+assign VGA_G = active ? 8'h10 : 8'h00;
+assign VGA_B = active ? 8'h30 : 8'h00;
+assign VGA_HS = ~(h_cnt >= 656 && h_cnt < 752);
+assign VGA_VS = ~(v_cnt >= 490 && v_cnt < 492);
+assign VGA_DE = active;
 assign VGA_F1 = 1'b0;
 assign VGA_SCALER = 2'b00;
 assign VGA_DISABLE = 1'b0;
@@ -188,6 +156,26 @@ assign VGA_DISABLE = 1'b0;
 assign LED_USER  = 8'h00;
 assign LED_POWER = 8'h01;
 assign LED_DISK  = 8'h00;
+
+// Unused interfaces
+assign SDRAM_A    = 13'h0;
+assign SDRAM_BA   = 2'b00;
+assign SDRAM_DQML = 1'b1;
+assign SDRAM_DQMH = 1'b1;
+assign SDRAM_nCS  = 1'b1;
+assign SDRAM_nWE  = 1'b1;
+assign SDRAM_nRAS = 1'b1;
+assign SDRAM_nCAS = 1'b1;
+assign SDRAM_CLK  = 1'b0;
+assign SDRAM_CKE  = 1'b0;
+
+assign DDRAM_CLK      = 1'b0;
+assign DDRAM_ADDR     = 29'h0;
+assign DDRAM_BURSTCNT = 4'h0;
+assign DDRAM_RD       = 1'b0;
+assign DDRAM_DIN      = 64'h0;
+assign DDRAM_BE       = 8'h0;
+assign DDRAM_WE       = 1'b0;
 
 assign SD_SCK  = 1'b0;
 assign SD_MOSI = 1'b0;
@@ -201,7 +189,6 @@ assign USER_OUT = 6'b000000;
 
 // --- Clocks ---
 wire clk_20m, clk_8m;
-// Simple dividers for now
 reg [1:0] div20;
 always @(posedge CLK_50M) div20 <= div20 + 2'd1;
 assign clk_20m = div20[1];
