@@ -62,7 +62,7 @@ wire vram_sel = (adr[23:17] == 7'b1001000) && (adr[16:15] == 2'b00); // 900000-9
 
 // --- BIOS ROM (128 KB) ---
 reg [15:0] bios_rom [0:65535];
-wire bios_we = io_download && (ioctl_index == 0) && ioctl_wr;
+wire bios_we = ioctl_download && (ioctl_index == 0) && ioctl_wr;
 
 // --- Work RAM (128 KB) ---
 reg [15:0] work_ram [0:65535];
@@ -195,13 +195,32 @@ always @(posedge fixed_8m_clk) begin
     if (z_ram_we) sound_ram[z_adr] <= z_dout;
 end
 
-// Z80 Data In Multiplexing
+// --- ICS2115 Audio Chip ---
+wire [15:0] sample_l, sample_r;
+wire ics_we = !z_iorq_n && !z_wr_n && (z_adr[15:8] == 8'h80);
+wire ics_re = !z_iorq_n && !z_rd_n && (z_adr[15:8] == 8'h80);
+wire [7:0] ics_dout;
+
+ics2115 sound_chip (
+    .clk(fixed_8m_clk),
+    .reset(reset),
+    .addr(z_adr[1:0]),
+    .din(z_dout),
+    .dout(ics_dout),
+    .we(ics_we),
+    .re(ics_re),
+    .sample_l(sample_l),
+    .sample_r(sample_r)
+);
+
+// Z80 Data In Multiplexing (Updated)
 always @(*) begin
     z80_din_reg = 8'hFF;
     if (!z_mreq_n) begin
         z80_din_reg = sound_ram[z_adr];
     end else if (!z_iorq_n) begin
         case (z_adr[15:8])
+            8'h80: z80_din_reg = ics_dout;
             8'h81: z80_din_reg = latch3;
             8'h82: z80_din_reg = latch1;
             8'h84: z80_din_reg = latch2;
