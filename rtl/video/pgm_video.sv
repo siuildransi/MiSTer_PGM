@@ -37,24 +37,22 @@ localparam TILE_VRAM  = 2'd1;
 localparam TILE_SDRAM = 2'd2;
 
 // --- Registers and Internal Signals ---
-reg [9:0]  h_cnt;
-reg [9:0]  v_cnt;
+reg [9:0]  h_cnt, v_cnt;
 reg        hs_d1, vs_d1, blank_n_d1;
 
 // Sprite Engine Regs
 reg [1:0]  sprite_state;
 reg [9:0]  px_sub_cnt;
 reg [7:0]  curr_sprite_idx;
-reg [7:0]  active_sprites_count;
+reg [4:0]  active_sprites_count; // Reducido a 16 sprites por línea (max 31 antes)
 reg [2:0]  sprite_attr_cnt;
 
-// Temp regs for scanning (Fase C)
+// Temp regs for scanning
 reg [11:0] temp_sy;
 reg [10:0] temp_sx;
 reg [5:0]  temp_sh;
 reg [15:0] temp_code;
-reg        temp_flipx, temp_flipy;
-reg [15:0] x_accum;
+reg        temp_flipx;
 reg [5:0]  source_x_ptr;
 
 struct packed {
@@ -63,45 +61,33 @@ struct packed {
     logic [15:0] code;
     logic [7:0]  x_zoom;
     logic [11:0] source_y_offset;
-    logic [4:0]  width;
     logic        flipx;
-} line_sprites [0:31];
+} line_sprites [0:15]; // Reducido de 32 a 16 para ahorrar registros
 
 // --- Memory Inference for Line Buffer ---
-// 448x10 = 4480 bits. 2 buffers = 8960 bits total.
-// Using separate arrays to help inference.
 reg [9:0] lb0 [0:511];
 reg [9:0] lb1 [0:511];
-
-// Write ports
 reg lb0_we, lb1_we;
 reg [8:0] lb0_wa, lb1_wa;
 reg [9:0] lb0_wd, lb1_wd;
-
-// Read ports (sequential)
 reg [9:0] lb0_rd, lb1_rd;
 
 always @(posedge clk) begin
     if (lb0_we) lb0[lb0_wa] <= lb0_wd;
-    lb0_rd <= lb0[px]; // px is synchronous with clk
+    lb0_rd <= lb0[px];
     if (lb1_we) lb1[lb1_wa] <= lb1_wd;
     lb1_rd <= lb1[px];
 end
 
 // Tile Engine Regs
 reg [1:0]  tile_state;
-localparam TILE_FETCH_TX = 2'd1;
-localparam TILE_FETCH_BG = 2'd2;
-
 reg [5:0]  tx_fetch_cnt; 
-reg [15:0] tx_tile_idx;
-reg [15:0] tx_tile_attr;
+reg [15:0] tx_tile_idx, tx_tile_attr;
 reg        tx_attr_phase;
 reg [9:0]  tx_buffer [0:447]; 
 
 reg [4:0]  bg_fetch_cnt; 
-reg [15:0] bg_tile_idx;
-reg [15:0] bg_tile_attr;
+reg [15:0] bg_tile_idx, bg_tile_attr;
 reg        bg_attr_phase;
 reg [1:0]  bg_sdram_phase;
 reg [4:0]  bg_buffer [0:447]; 
@@ -117,8 +103,8 @@ wire [9:0] py = v_cnt - 10'd128;
 wire       active = (h_cnt >= 96 && h_cnt < 544 && v_cnt >= 128 && v_cnt < 352);
 wire       blank_n_w = active;
 
-wire        buf_wr_idx = v_cnt[0];
-wire        buf_rd_idx = ~v_cnt[0];
+wire       buf_wr_idx = v_cnt[0];
+wire       buf_rd_idx = ~v_cnt[0];
 
 wire [4:0] tx_tile_line = (py + tx_scrolly[7:0]) & 8'h07;
 wire [8:0] tx_vram_row  = ((py + tx_scrolly) >> 3) & 8'h1F;
@@ -171,17 +157,14 @@ always @(posedge clk) begin
 end
 
 // --- Sprite Engine & Buffer Control ---
-reg [8:0] clear_ptr;
-
 always @(posedge clk) begin
     if (reset) begin
         sprite_state <= SCAN_SPRITES;
         curr_sprite_idx <= 0; active_sprites_count <= 0; sprite_attr_cnt <= 0;
-        x_accum <= 0; source_x_ptr <= 0; px_sub_cnt <= 0;
-        clear_ptr <= 0;
+        source_x_ptr <= 0; px_sub_cnt <= 0;
         lb0_we <= 0; lb1_we <= 0;
     end else begin
-        // Sequential Clear
+        // Sequential Clear logic using h_cnt
         if (h_cnt < 448) begin
             if (buf_wr_idx == 0) begin lb0_we <= 1; lb0_wa <= h_cnt[8:0]; lb0_wd <= 0; end
             else begin lb1_we <= 1; lb1_wa <= h_cnt[8:0]; lb1_wd <= 0; end
@@ -195,7 +178,7 @@ always @(posedge clk) begin
                         case (sprite_attr_cnt)
                             3'd0: temp_sy <= sprite_dout[11:0];
                             3'd1: temp_sx <= sprite_dout[10:0];
-                            3'd2: begin temp_sh <= sprite_dout[5:0]; temp_flipy <= sprite_dout[7]; temp_flipx <= sprite_dout[6]; end
+                            3'd2: begin temp_sh <= sprite_dout[5:0]; temp_flipx <= sprite_dout[6]; end
                             3'd3: temp_code <= sprite_dout;
                             3'd4: begin
                                 automatic int zx = (sprite_dout[7:0] == 0)  ? 64 : sprite_dout[7:0];
@@ -204,13 +187,12 @@ always @(posedge clk) begin
                                     automatic int dy = v_cnt - temp_sy;
                                     automatic int sy_off = (dy * zy) >> 6;
                                     if (sy_off < temp_sh) begin
-                                        if (active_sprites_count < 32) begin
+                                        if (active_sprites_count < 16) begin
                                             line_sprites[active_sprites_count].x <= temp_sx;
                                             line_sprites[active_sprites_count].code <= temp_code;
                                             line_sprites[active_sprites_count].x_zoom <= zx;
-                                            line_sprites[active_sprites_count].source_y_offset <= sy_off;
+                                            line_sprites[active_sprites_count].source_y_offset <= sy_off[11:0];
                                             line_sprites[active_sprites_count].pal <= sprite_dout[13:9];
-                                            line_sprites[active_sprites_count].width <= 4;
                                             line_sprites[active_sprites_count].flipx <= temp_flipx;
                                             active_sprites_count <= active_sprites_count + 1'd1;
                                         end
@@ -228,7 +210,6 @@ always @(posedge clk) begin
                 FETCH_SPRITES: begin
                     if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
                         if (ddram_dout_ready) begin
-                            // Simplified fetch for now to ensure RAM inference
                             automatic int dx = line_sprites[curr_sprite_idx].x + px_sub_cnt;
                             if (dx < 448) begin
                                 if (buf_wr_idx == 0) begin lb0_we <= 1; lb0_wa <= dx[8:0]; lb0_wd <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]}; end
@@ -243,17 +224,17 @@ always @(posedge clk) begin
                 end
 
                 WAIT_START: begin
-                    lb0_we <= 0; lb1_we <= 0;
                     if (h_cnt == 640) begin
                         sprite_state <= SCAN_SPRITES; curr_sprite_idx <= 0; active_sprites_count <= 0; sprite_attr_cnt <= 0;
                     end
                 end
+                default: ;
             endcase
         end
     end
 end
 
-// --- Tile Engine State Machine ---
+// --- Tile Engine ---
 always @(posedge clk) begin
     if (reset) begin
         tile_state <= TILE_IDLE; tx_fetch_cnt <= 0; bg_fetch_cnt <= 0;
@@ -282,6 +263,7 @@ always @(posedge clk) begin
                     else bg_sdram_phase <= bg_sdram_phase + 1'd1;
                 end
             end
+            default: ;
         endcase
     end
 end
