@@ -175,16 +175,11 @@ always @(posedge clk) begin
                     ddram_rd <= 0;
                     sprite_state <= WAIT_START;
                 end
-            end // Close FETCH_SPRITES state
+            end
 
             WAIT_START: begin
-                // Wait for verify H-Blank start (approx line end) to begin scanning for NEXT line.
-                // Current line is being displayed (reading from buf_rd).
-                // We write to buf_wr.
-                // Scan starts at 640.
                 if (h_cnt == 640) begin
                     sprite_state <= SCAN_SPRITES;
-                    // Prepare for next line
                     curr_sprite_idx <= 0;
                     active_sprites_count <= 0;
                     attr_cnt <= 0;
@@ -194,61 +189,74 @@ always @(posedge clk) begin
     end
 end
 
-// --- Tile Fetcher State Machine ---
+// --- Coordinate Mapping (448x224 inside 640x480) ---
+wire [9:0] px = h_cnt - 10'd96;
+wire [9:0] py = v_cnt - 10'd128;
+
+// TX Layer Address Logic
+wire [4:0] tx_tile_line = (py + tx_scrolly[7:0]) & 8'h07;
+wire [8:0] tx_vram_row  = ((py + tx_scrolly) >> 3) & 8'h1F;
+
+// --- Tile Fetcher State Machine (Parallel to Sprites) ---
 localparam TILE_IDLE  = 2'd0;
 localparam TILE_VRAM  = 2'd1;
 localparam TILE_SDRAM = 2'd2;
 
 reg [1:0]  tile_state;
-reg [5:0]  tx_fetch_cnt; // 0-55 tiles
+reg [5:0]  tx_fetch_cnt; 
 reg [15:0] tx_tile_idx;
 reg [15:0] tx_tile_attr;
+reg        tx_attr_phase;
+reg [2:0]  tx_vram_sub; // For multiple attribute words if needed
 
 always @(posedge clk) begin
     if (reset) begin
         tile_state <= TILE_IDLE;
         tx_fetch_cnt <= 0;
+        tx_attr_phase <= 0;
+        ddram_rd <= 1'b0; // Careful: shared with sprites? 
+        // Need to mux ddram_rd/addr in PGM.sv or here.
+        // For now, let's assume video_inst handles its own rd.
     end else begin
         case (tile_state)
             TILE_IDLE: begin
                 if (h_cnt == 0) begin
                     tile_state <= TILE_VRAM;
                     tx_fetch_cnt <= 0;
+                    tx_attr_phase <= 0;
                 end
             end
             
             TILE_VRAM: begin
-                // Read VRAM for TX tile
-                // Word 0: Index, Word 1: Attr
-                vram_addr <= 14'h2000 + (((tx_vram_row * 64) + ((tx_fetch_cnt + tx_scrollx[8:3]) & 6'h3F)) << 1) + attr_cnt[0];
-                if (attr_cnt[0] == 0) tx_tile_idx <= vram_dout;
-                else tx_tile_attr <= vram_dout;
-                
-                if (attr_cnt[0] == 1) begin
-                    attr_cnt <= 0;
+                vram_addr <= 14'h2000 + (((tx_vram_row * 64) + ((tx_fetch_cnt + tx_scrollx[8:3]) & 6'h3F)) << 1) + {13'd0, tx_attr_phase};
+                if (tx_attr_phase == 0) begin
+                    tx_tile_idx <= vram_dout;
+                    tx_attr_phase <= 1;
+                end else begin
+                    tx_tile_attr <= vram_dout;
+                    tx_attr_phase <= 0;
                     tile_state <= TILE_SDRAM;
-                end else attr_cnt <= 1;
+                end
             end
             
             TILE_SDRAM: begin
                 if (!ddram_busy && !ddram_rd) begin
                     ddram_rd <= 1'b1;
-                    // SDRAM Address for TX pattern (8x8x4bpp = 32 bytes)
-                    // PGM T-ROM Offset in SDRAM: needs to be confirmed, but using base for now.
                     ddram_addr <= {7'd0, tx_tile_idx[11:0], 5'd0} + {24'd0, tx_tile_line[2:1], 3'd0}; 
                 end
                 
                 if (ddram_dout_ready) begin
                     ddram_rd <= 1'b0;
                     for (int i=0; i<8; i=i+1) begin
-                        // Store with Palette from Attr [5:1]
                         tx_buffer[tx_fetch_cnt*8 + i] <= {tx_tile_attr[5:1], (tx_tile_line[0] ? 
                             ddram_dout[32 + i*4 +: 4] : ddram_dout[i*4 +: 4])};
                     end
                     
                     if (tx_fetch_cnt == 55) tile_state <= TILE_IDLE;
-                    else tx_fetch_cnt <= tx_fetch_cnt + 1'd1;
-                    tile_state <= TILE_VRAM;
+                    else begin
+                        tx_fetch_cnt <= tx_fetch_cnt + 1'd1;
+                        tile_state <= TILE_VRAM;
+                    end
                 end
             end
         endcase
@@ -257,42 +265,31 @@ end
 
 // Mixer & Layer Priority
 reg [9:0] sprite_data;
-reg [9:0] tx_pix;
-reg [15:0] bg_data; // Still placeholder until BG fetcher added
+reg [9:0] tx_p;
+reg [15:0] bg_placeholder;
 
 always @(posedge clk) begin
     if (!blank_n_w) begin
         r <= 0; g <= 0; b <= 0;
         pal_addr <= 0;
     end else begin
-        // Read Layer Buffers
         sprite_data <= line_buffer[buf_rd][px];
-        tx_pix      <= tx_buffer[px];
+        tx_p        <= tx_buffer[px];
         
-        // Priority: TX > Sprite > BG
-        if (tx_pix[3:0] != 15) begin // Pen 15 is transparent for TX
-            pal_addr <= {5'd1, tx_pix[4:0]}; // Use TX palette bank
+        if (tx_p[3:0] != 15) begin
+            pal_addr <= {5'd1, tx_p[4:0]};
         end else if (sprite_data[4:0] != 0) begin
             pal_addr <= {sprite_data[9:5], sprite_data[4:0]};
         end else begin
             pal_addr <= 0; 
         end
         
-        // Final Output
-        if (tx_pix[3:0] != 15) begin
-             // Use TX color pipeline (needs another pal_dout latch?)
-             // Simple version for now:
-             r <= {pal_dout[14:10], 3'b0};
-             g <= {pal_dout[9:5],   3'b0};
-             b <= {pal_dout[4:0],   3'b0};
-        end else if (sprite_data[4:0] != 0) begin
+        if (tx_p[3:0] != 15 || sprite_data[4:0] != 0) begin
             r <= {pal_dout[14:10], 3'b0};
             g <= {pal_dout[9:5],   3'b0};
             b <= {pal_dout[4:0],   3'b0};
         end else begin
-            r <= {bg_data[15:11], 3'b0};
-            g <= {bg_data[10:5],  2'b0};
-            b <= {bg_data[4:0],   3'b0};
+            r <= 0; g <= 64; b <= 0; // Dark Green Background Placeholder
         end
         
         line_buffer[buf_rd][px] <= 10'd0;
