@@ -50,12 +50,12 @@ reg [2:0]  sprite_attr_cnt;
 
 struct packed {
     logic [10:0] x;
-    logic [4:0]  width;
-    logic [4:0]  height;
     logic [4:0]  pal;
     logic [15:0] code;
     logic [7:0]  x_zoom;
-    logic [7:0]  y_zoom;
+    logic [11:0] source_y_offset; // Which row to fetch from SDRAM
+    logic [4:0]  width;          // Width in 16-pixel units (approx)
+    logic        flipx;
 } line_sprites [0:31];
 
 reg [9:0] line_buffer [0:1][0:447]; 
@@ -112,7 +112,10 @@ always @(posedge clk) begin
             // Sprite priority
             if (!ddram_busy && !ddram_rd) begin
                 ddram_rd <= 1'b1;
-                ddram_addr <= {5'd0, line_sprites[curr_sprite_idx].code, 3'd0} + px_sub_cnt;
+                // Address: Base + (SourceY * WidthWords) + (SourceX / 12)
+                ddram_addr <= {5'd0, line_sprites[curr_sprite_idx].code, 3'd0} + 
+                              {12'd0, line_sprites[curr_sprite_idx].source_y_offset, 5'd0} + // Dummy row offset
+                              {25'd0, source_x_ptr[5:4]}; // Dummy word offset
             end else if (ddram_dout_ready) begin
                 ddram_rd <= 1'b0;
             end
@@ -134,6 +137,91 @@ always @(posedge clk) begin
         end else begin
             ddram_rd <= 1'b0;
         end
+    end
+end
+
+// --- Sprite Engine State Machine ---
+always @(posedge clk) begin
+    if (reset) begin
+        sprite_state <= SCAN_SPRITES;
+        curr_sprite_idx <= 0;
+        active_sprites_count <= 0;
+        sprite_attr_cnt <= 0;
+        x_accum <= 0;
+        source_x_ptr <= 0;
+    end else begin
+        case (sprite_state)
+            SCAN_SPRITES: begin
+                if (h_cnt >= 640) begin
+                    sprite_addr <= {curr_sprite_idx, 2'b00} + sprite_attr_cnt[1:0];
+                    case (sprite_attr_cnt)
+                        3'd0: temp_sy <= sprite_dout[11:0];
+                        3'd1: temp_sx <= sprite_dout[10:0];
+                        3'd2: begin
+                            temp_sh <= sprite_dout[5:0];
+                            temp_flipy <= sprite_dout[7];
+                            temp_flipx <= sprite_dout[6];
+                        end
+                        3'd3: temp_code <= sprite_dout;
+                        3'd4: begin
+                            automatic int zx = (sprite_dout[7:0] == 0)  ? 64 : sprite_dout[7:0];
+                            automatic int zy = (sprite_dout[15:8] == 0) ? 64 : sprite_dout[15:8];
+                            
+                            if (v_cnt >= temp_sy) begin
+                                automatic int dy = v_cnt - temp_sy;
+                                automatic int sy_off = (dy * zy) >> 6;
+                                
+                                if (sy_off < temp_sh) begin
+                                    if (active_sprites_count < 32) begin
+                                        line_sprites[active_sprites_count].x <= temp_sx;
+                                        line_sprites[active_sprites_count].code <= temp_code;
+                                        line_sprites[active_sprites_count].x_zoom <= zx;
+                                        line_sprites[active_sprites_count].source_y_offset <= sy_off;
+                                        line_sprites[active_sprites_count].pal <= sprite_dout[13:9];
+                                        line_sprites[active_sprites_count].width <= 4; // Placeholder
+                                        line_sprites[active_sprites_count].flipx <= temp_flipx;
+                                        active_sprites_count <= active_sprites_count + 1'd1;
+                                    end
+                                end
+                            end
+                        end
+                    endcase
+                    
+                    if (sprite_attr_cnt == 4) begin
+                        sprite_attr_cnt <= 0;
+                        curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                        if (curr_sprite_idx == 255) sprite_state <= FETCH_SPRITES;
+                    end else sprite_attr_cnt <= sprite_attr_cnt + 1'd1;
+                end
+            end
+            
+            FETCH_SPRITES: begin
+                if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
+                    if (ddram_dout_ready) begin
+                        // Horizontal Zoom Loop:
+                        // Process the current word (12 pixels) and place them in line buffer
+                        // using the x_accum to decide repetitions/skips
+                        for (int i=0; i<12; i=i+1) begin
+                            automatic int dx = line_sprites[curr_sprite_idx].x + px_sub_cnt;
+                            if (dx < 448) begin
+                                // Simplified: fetch 1 pixel per clock for now, or loop
+                                line_buffer[buf_wr][dx] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[i*5 +: 5]};
+                            end
+                            px_sub_cnt <= px_sub_cnt + 1'd1;
+                        end
+                        
+                        // Increment word pointer
+                        source_x_ptr <= source_x_ptr + 12;
+                        if (source_x_ptr >= 48) begin // Dummy end
+                            source_x_ptr <= 0;
+                            px_sub_cnt <= 0;
+                            curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                        end
+                    end
+                end 
+                if (curr_sprite_idx == active_sprites_count) sprite_state <= WAIT_START;
+            end
+        endcase
     end
 end
 
