@@ -105,12 +105,13 @@ hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;
 );
 
 // --- Clocks ---
-// Video clock: use 50MHz divided for ~25MHz pixel clock (640x480@60Hz)
-reg clk_vid;
-always @(posedge CLK_50M) clk_vid <= ~clk_vid;
+// CLK_VIDEO must be driven by a clock pin or PLL (not logic).
+// Use CLK_50M directly, CE_PIXEL toggles to give ~25MHz effective pixel rate.
+assign CLK_VIDEO = CLK_50M;
 
-assign CLK_VIDEO = clk_vid;
-assign CE_PIXEL  = 1'b1;      // Every video clock cycle is a pixel
+reg ce_pix_reg;
+always @(posedge CLK_50M) ce_pix_reg <= ~ce_pix_reg;
+assign CE_PIXEL = ce_pix_reg;
 assign VGA_SL    = 2'b00;     // No scanlines
 assign VIDEO_ARX = 13'd4;     // 4:3 aspect ratio
 assign VIDEO_ARY = 13'd3;
@@ -153,7 +154,7 @@ assign AUDIO_MIX = 2'b00;
 reg [9:0] h_cnt;
 reg [9:0] v_cnt;
 
-always @(posedge clk_vid) begin
+always @(posedge CLK_50M) begin
     if (RESET) begin
         h_cnt <= 0;
         v_cnt <= 0;
