@@ -30,4 +30,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PGM_Core
-          path: output/*.rbf
+          path: |
+            *.rbf
+            output_files/*.rbf
+          if-no-files-found: warn
