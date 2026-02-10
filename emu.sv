@@ -42,7 +42,7 @@ module emu (
 
     // SDRAM
     inout  [15:0] SDRAM_DQ,
-    output [12:1] SDRAM_A,
+    output [12:0] SDRAM_A,
     output        SDRAM_DQML,
     output        SDRAM_DQMH,
     output [1:0]  SDRAM_BA,
