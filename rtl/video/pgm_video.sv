@@ -111,15 +111,21 @@ always @(posedge clk) begin
             end
             
             FETCH_SPRITES: begin
+                // Fetch pixel data from B-ROM and A-ROM for the sprites found in SCAN_SPRITES
                 if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
                     if (!ddram_busy) begin
                         ddram_addr <= 29'h0400000 + line_sprites[curr_sprite_idx].code[15:0];
                         ddram_rd <= 1;
-                        // Unpacking 5bpp:
-                        // P0 = dout[4:0]
-                        // P1 = dout[9:5]
-                        // P2 = dout[14:10]
-                        // We would write these to line_buffer at the sprite's X position.
+                        
+                        // --- Simplistic Sprite Drawing to Line Buffer ---
+                        // For a real PGM, we need to handle horizontal zoom and flip.
+                        // For now, we just copy 16 pixels if they fit in the scanline.
+                        if (line_sprites[curr_sprite_idx].x < 448) begin
+                            // This would be a loop/state machine in real hardware.
+                            // Latching the 5bpp pixels into the buffer:
+                            line_buffer[line_sprites[curr_sprite_idx].x] <= ddram_dout[4:0];
+                        end
+                        
                         curr_sprite_idx <= curr_sprite_idx + 1'd1;
                     end
                 end else begin
@@ -151,10 +157,17 @@ always @(posedge clk) begin
     if (!active) begin
         r <= 0; g <= 0; b <= 0;
     end else begin
-        // Mix Background tiles and Sprites (Sprites TBD)
-        r <= bg_data[15:11] << 3;
-        g <= bg_data[10:5]  << 2;
-        b <= bg_data[4:0]   << 3;
+        // Mix Background tiles and Sprites (Simple Priority)
+        // If sprite pixel is not 0 (transparent), show sprite.
+        if (line_buffer[px] != 0) begin
+            // Sprite Pixel (Palette lookup placeholder)
+            r <= 8'hFF; g <= 8'hFF; b <= 8'hFF;
+        end else begin
+            // Background Pixel
+            r <= bg_data[15:11] << 3;
+            g <= bg_data[10:5]  << 2;
+            b <= bg_data[4:0]   << 3;
+        end
     end
 end
 
