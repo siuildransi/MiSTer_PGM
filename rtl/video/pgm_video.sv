@@ -103,6 +103,8 @@ always @(posedge clk) begin
         curr_sprite_idx <= 0;
         active_sprites_count <= 0;
         attr_cnt <= 0;
+        ddram_rd <= 1'b0;
+        ddram_addr <= 0;
     end else begin
         case (sprite_state)
             SCAN_SPRITES: begin
@@ -136,6 +138,12 @@ always @(posedge clk) begin
                         // Note: cur_fetch_x is defined as a wire above
                         
                         if (cur_fetch_x < 448) begin
+                            // Drive SDRAM Read
+                            ddram_rd <= 1'b1;
+                            // Placeholder Address: Base + (Code * 4 words per tile) + sub_cnt/4? 
+                            // This is a dummy address for now to satisfy synthesis.
+                            ddram_addr <= {5'd0, line_sprites[curr_sprite_idx].code, 3'd0} + px_sub_cnt; 
+                            
                             case (px_sub_cnt)
                                 // Word 0
                                 4'd0:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]};
