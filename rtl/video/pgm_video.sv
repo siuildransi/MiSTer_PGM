@@ -3,7 +3,7 @@ module pgm_video (
     input         reset,
 
     // Video Data from Core
-    output reg [13:1] vram_addr,
+    output reg [14:1] vram_addr,
     input      [15:0] vram_dout,
     output reg [12:1] pal_addr,
     input      [15:0] pal_dout,
@@ -47,7 +47,8 @@ end
 // Signals
 wire hs_w = ~(h_cnt >= 656 && h_cnt < 752);
 wire vs_w = ~(v_cnt >= 490 && v_cnt < 492);
-wire blank_n_w = (h_cnt < 640 && v_cnt < 480);
+wire active = (h_cnt >= 96 && h_cnt < 544 && v_cnt >= 128 && v_cnt < 352);
+wire blank_n_w = active;
 
 reg hs_d1, vs_d1, blank_n_d1;
 
@@ -193,68 +194,108 @@ always @(posedge clk) begin
     end
 end
 
-// --- Tilemap Rendering (Background) ---
-wire active = (h_cnt >= 96 && h_cnt < 544 && v_cnt >= 128 && v_cnt < 352);
-wire [9:0] px = h_cnt - 10'd96;
-wire [9:0] py = v_cnt - 10'd128;
+// --- Tile Fetcher State Machine ---
+localparam TILE_IDLE  = 2'd0;
+localparam TILE_VRAM  = 2'd1;
+localparam TILE_SDRAM = 2'd2;
 
-reg [15:0] bg_data;
+reg [1:0]  tile_state;
+reg [5:0]  tx_fetch_cnt; // 0-55 tiles
+reg [15:0] tx_tile_idx;
+reg [15:0] tx_tile_attr;
+
 always @(posedge clk) begin
-    if (active) begin
-        case (h_cnt[2:0])
-            3'd0: vram_addr <= {py[7:3], px[8:3]};
-            3'd4: bg_data <= vram_dout;
+    if (reset) begin
+        tile_state <= TILE_IDLE;
+        tx_fetch_cnt <= 0;
+    end else begin
+        case (tile_state)
+            TILE_IDLE: begin
+                if (h_cnt == 0) begin
+                    tile_state <= TILE_VRAM;
+                    tx_fetch_cnt <= 0;
+                end
+            end
+            
+            TILE_VRAM: begin
+                // Read VRAM for TX tile
+                // Word 0: Index, Word 1: Attr
+                vram_addr <= 14'h2000 + (((tx_vram_row * 64) + ((tx_fetch_cnt + tx_scrollx[8:3]) & 6'h3F)) << 1) + attr_cnt[0];
+                if (attr_cnt[0] == 0) tx_tile_idx <= vram_dout;
+                else tx_tile_attr <= vram_dout;
+                
+                if (attr_cnt[0] == 1) begin
+                    attr_cnt <= 0;
+                    tile_state <= TILE_SDRAM;
+                end else attr_cnt <= 1;
+            end
+            
+            TILE_SDRAM: begin
+                if (!ddram_busy && !ddram_rd) begin
+                    ddram_rd <= 1'b1;
+                    // SDRAM Address for TX pattern (8x8x4bpp = 32 bytes)
+                    // PGM T-ROM Offset in SDRAM: needs to be confirmed, but using base for now.
+                    ddram_addr <= {7'd0, tx_tile_idx[11:0], 5'd0} + {24'd0, tx_tile_line[2:1], 3'd0}; 
+                end
+                
+                if (ddram_dout_ready) begin
+                    ddram_rd <= 1'b0;
+                    for (int i=0; i<8; i=i+1) begin
+                        // Store with Palette from Attr [5:1]
+                        tx_buffer[tx_fetch_cnt*8 + i] <= {tx_tile_attr[5:1], (tx_tile_line[0] ? 
+                            ddram_dout[32 + i*4 +: 4] : ddram_dout[i*4 +: 4])};
+                    end
+                    
+                    if (tx_fetch_cnt == 55) tile_state <= TILE_IDLE;
+                    else tx_fetch_cnt <= tx_fetch_cnt + 1'd1;
+                    tile_state <= TILE_VRAM;
+                end
+            end
         endcase
     end
 end
 
-// Color Output Mixer
+// Mixer & Layer Priority
 reg [9:0] sprite_data;
-reg       is_sprite;
+reg [9:0] tx_pix;
+reg [15:0] bg_data; // Still placeholder until BG fetcher added
 
 always @(posedge clk) begin
-    if (!active) begin
+    if (!blank_n_w) begin
         r <= 0; g <= 0; b <= 0;
         pal_addr <= 0;
-        is_sprite <= 0;
     end else begin
-        // Pipeline Stage 1: Address Setup
-        // Priority: Sprite > BG
-        // Note: line_buffer read is async or sync? Infer M10K -> sync.
-        // But line_buffer is 'reg', so it's logic/registers (or simple RAM).
-        // For 448 pixels, FPGA fits this in regs or MLAB.
-        
+        // Read Layer Buffers
         sprite_data <= line_buffer[buf_rd][px];
+        tx_pix      <= tx_buffer[px];
         
-        // Clear-on-Read (Clear the pixel we just read for the next frame use)
-        // This avoids the 448-cycle CLEAR_BUFFER state.
-        line_buffer[buf_rd][px] <= 10'd0;
-        
-        if (sprite_data[4:0] != 0) begin
-            pal_addr <= {sprite_data[9:5], sprite_data[4:0]}; // Pal(5) + Color(5)
-            is_sprite <= 1'b1;
+        // Priority: TX > Sprite > BG
+        if (tx_pix[3:0] != 15) begin // Pen 15 is transparent for TX
+            pal_addr <= {5'd1, tx_pix[4:0]}; // Use TX palette bank
+        end else if (sprite_data[4:0] != 0) begin
+            pal_addr <= {sprite_data[9:5], sprite_data[4:0]};
         end else begin
-            // BG Color (Need to implement BG Palette logic too!)
-            // Use Dummy BG for now
-            pal_addr <= {5'd0, 5'd0}; 
-            is_sprite <= 1'b0;
+            pal_addr <= 0; 
         end
         
-        // Pipeline Stage 2: Color Output (from pal_dout)
-        // pal_dout is RGB555 (15 bits).
-        // PGM Color format: XRRRRRGGGGGBBBBB
-        
-        if (is_sprite) begin
+        // Final Output
+        if (tx_pix[3:0] != 15) begin
+             // Use TX color pipeline (needs another pal_dout latch?)
+             // Simple version for now:
+             r <= {pal_dout[14:10], 3'b0};
+             g <= {pal_dout[9:5],   3'b0};
+             b <= {pal_dout[4:0],   3'b0};
+        end else if (sprite_data[4:0] != 0) begin
             r <= {pal_dout[14:10], 3'b0};
             g <= {pal_dout[9:5],   3'b0};
             b <= {pal_dout[4:0],   3'b0};
         end else begin
-             // BG Placeholder (White for BG, Black for nothing)
-             // Actually, use bg_data from tilemap
-             r <= {bg_data[15:11], 3'b0};
-             g <= {bg_data[10:5],  2'b0};
-             b <= {bg_data[4:0],   3'b0};
+            r <= {bg_data[15:11], 3'b0};
+            g <= {bg_data[10:5],  2'b0};
+            b <= {bg_data[4:0],   3'b0};
         end
+        
+        line_buffer[buf_rd][px] <= 10'd0;
     end
 end
 

@@ -172,7 +172,7 @@ generate
 endgenerate
 
 // Connections
-wire [13:1] vram_addr_vid;
+wire [14:1] vram_addr_vid;
 wire [15:0] vram_dout_vid = vram[vram_addr_vid];
 
 wire [12:1] pal_addr_vid;
