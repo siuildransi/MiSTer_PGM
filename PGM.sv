@@ -176,7 +176,7 @@ wire [13:1] vram_addr_vid;
 wire [15:0] vram_dout_vid = vram[vram_addr_vid];
 
 wire [12:1] pal_addr_vid;
-wire [15:0] pal_dout_vid = pal_ram[pal_addr_vid];
+wire [15:0] pal_dout_vid = pal_ram[pal_addr_vid[11:1]];
 
 wire [10:1] spr_addr_vid;
 // Sprite data comes from Main Work RAM (High/Low split in PGM.sv)
