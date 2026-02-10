@@ -103,6 +103,8 @@ PGM pgm_core (
     .renderer_pal_addr(pal_addr),
     .renderer_pal_dout(pal_dout),
     .vregs_dout(vregs),
+    .sprite_ram_addr(sprite_addr),
+    .sprite_ram_dout(sprite_dout),
 
     // Audio
     .sample_l(sample_l),
@@ -120,6 +122,8 @@ wire [15:0] vram_dout;
 wire [12:1] pal_addr;
 wire [15:0] pal_dout;
 wire [15:0] vregs [0:31];
+wire [10:1] sprite_addr;
+wire [15:0] sprite_dout;
 
 pgm_video video_gen (
     .clk(CLK_50M),
@@ -131,6 +135,8 @@ pgm_video video_gen (
     .pal_addr(pal_addr),
     .pal_dout(pal_dout),
     .vregs(vregs),
+    .sprite_addr(sprite_addr),
+    .sprite_dout(sprite_dout),
 
     // SDRAM (Graphic Data)
     .ddram_rd(DDRAM_RD),

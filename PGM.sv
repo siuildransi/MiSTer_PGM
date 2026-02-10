@@ -13,9 +13,11 @@ module PGM (
     // Video Engine interface
     input  [13:1] renderer_vram_addr,
     output [15:0] renderer_vram_dout,
-    input  [12:1] renderer_pal_addr,
-    output [15:0] renderer_pal_dout,
+    output [12:1] renderer_pal_addr,
+    input  [15:0] renderer_pal_dout,
     output [15:0] vregs_dout [0:31],
+    output [10:1] sprite_ram_addr,
+    input  [15:0] sprite_ram_dout,
 
     // Audio Outputs
     output [15:0] sample_l,
@@ -261,6 +263,7 @@ T80s sound_cpu (
 // --- Video Interface Exports ---
 assign renderer_vram_dout = video_ram[renderer_vram_addr];
 assign renderer_pal_dout  = palette_ram[renderer_pal_addr];
+assign sprite_ram_dout    = work_ram[sprite_ram_addr];
 
 genvar i;
 generate
