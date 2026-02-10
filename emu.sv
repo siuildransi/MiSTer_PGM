@@ -142,14 +142,31 @@ wire [15:0] sample_l, sample_r;
 PGM pgm_core (
     .fixed_20m_clk(clk_20m),
     .fixed_8m_clk(clk_8m),
+    .video_clk(clk_vid),
     .reset(RESET || ioctl_download),
     .ioctl_download(ioctl_download),
     .ioctl_wr(ioctl_wr),
     .ioctl_addr(ioctl_addr),
     .ioctl_dout(ioctl_dout),
     .ioctl_index(ioctl_index),
+    
+    // DDRAM Interface
+    .ddram_rd(DDRAM_RD),
+    .ddram_addr(DDRAM_ADDR),
+    .ddram_dout(DDRAM_DOUT),
+    .ddram_busy(DDRAM_BUSY),
+    
+    // Audio
     .sample_l(sample_l),
-    .sample_r(sample_r)
+    .sample_r(sample_r),
+    
+    // Video
+    .v_r(core_r),
+    .v_g(core_g),
+    .v_b(core_b),
+    .v_hs(core_hs),
+    .v_vs(core_vs),
+    .v_blank(core_blank)
 );
 
 assign AUDIO_L = sample_l;
@@ -157,30 +174,19 @@ assign AUDIO_R = sample_r;
 assign AUDIO_S = 1'b0;
 assign AUDIO_MIX = 2'b00;
 
-// --- Minimal Video (blank dark screen with sync) ---
-reg [9:0] h_cnt;
-reg [9:0] v_cnt;
+// --- Video Routing ---
+wire [7:0] core_r, core_g, core_b;
+wire core_hs, core_vs, core_blank;
 
-always @(posedge clk_vid) begin
-    if (RESET) begin
-        h_cnt <= 0;
-        v_cnt <= 0;
-    end else begin
-        if (h_cnt == 799) begin
-            h_cnt <= 0;
-            if (v_cnt == 524) v_cnt <= 0;
-            else v_cnt <= v_cnt + 1'd1;
-        end else h_cnt <= h_cnt + 1'd1;
-    end
-end
+assign VGA_R  = core_blank ? core_r : 8'h00;
+assign VGA_G  = core_blank ? core_g : 8'h00;
+assign VGA_B  = core_blank ? core_b : 8'h00;
+assign VGA_HS = core_hs;
+assign VGA_VS = core_vs;
+assign VGA_DE = core_blank;
 
-wire active = (h_cnt < 640 && v_cnt < 480);
-
-assign VGA_R  = active ? 8'h10 : 8'h00;
-assign VGA_G  = active ? 8'h10 : 8'h00;
-assign VGA_B  = active ? 8'h30 : 8'h00;
-assign VGA_HS = ~(h_cnt >= 656 && h_cnt < 752);
-assign VGA_VS = ~(v_cnt >= 490 && v_cnt < 492);
+// Placeholder for logic removed
+wire unused_signals = &{1'b0};
 assign VGA_DE = active;
 assign VGA_F1 = 1'b0;
 assign VGA_SCALER = 2'b00;

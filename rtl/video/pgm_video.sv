@@ -48,10 +48,18 @@ wire hs_w = ~(h_cnt >= 656 && h_cnt < 752);
 wire vs_w = ~(v_cnt >= 490 && v_cnt < 492);
 wire blank_n_w = (h_cnt < 640 && v_cnt < 480);
 
+reg hs_d1, vs_d1, blank_n_d1;
+
 always @(posedge clk) begin
-    hs <= hs_w;
-    vs <= vs_w;
-    blank_n <= blank_n_w;
+    // Stage 1
+    hs_d1 <= hs_w;
+    vs_d1 <= vs_w;
+    blank_n_d1 <= blank_n_w;
+    
+    // Stage 2 (Output)
+    hs <= hs_d1;
+    vs <= vs_d1;
+    blank_n <= blank_n_d1;
 end
 
 // --- Sprite Engine (Line Buffer Scanning) ---
@@ -78,8 +86,15 @@ struct packed {
     logic [7:0]  y_zoom;
 } line_sprites [0:31];
 
-// Pixel line buffer (to avoid SDRAM bottlenecks during active display)
-reg [4:0] line_buffer [0:447]; // 5 bits per pixel for the line
+// Pixel line buffer (Double Buffered)
+// Bank 0: Even Lines, Bank 1: Odd Lines
+// Bits [4:0]: Pixel index (0-31)
+// Bits [9:5]: Palette index (0-31)
+reg [9:0] line_buffer [0:1][0:447]; 
+
+wire        buf_wr = v_cnt[0];     // Write to current line index
+wire        buf_rd = ~v_cnt[0];    // Read from previous line index
+wire [10:0] cur_fetch_x = line_sprites[curr_sprite_idx].x + {1'b0, px_sub_cnt};
 
 reg [2:0] attr_cnt;
 always @(posedge clk) begin
@@ -114,43 +129,57 @@ always @(posedge clk) begin
             FETCH_SPRITES: begin
                 if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
                     if (!ddram_busy) begin
-                        // Sequential pixel unpacking to avoid multi-port BRAM violation
-                        case (px_sub_cnt)
-                            2'd0: begin
-                                if (line_sprites[curr_sprite_idx].x < 448)
-                                    line_buffer[line_sprites[curr_sprite_idx].x] <= ddram_dout[4:0];
-                                px_sub_cnt <= 2'd1;
-                            end
-                            2'd1: begin
-                                if (line_sprites[curr_sprite_idx].x + 1 < 448)
-                                    line_buffer[line_sprites[curr_sprite_idx].x+1] <= ddram_dout[9:5];
-                                px_sub_cnt <= 2'd2;
-                            end
-                            2'd2: begin
-                                if (line_sprites[curr_sprite_idx].x + 2 < 448)
-                                    line_buffer[line_sprites[curr_sprite_idx].x+2] <= ddram_dout[14:10];
-                                px_sub_cnt <= 2'd0;
-                                curr_sprite_idx <= curr_sprite_idx + 1'd1;
-                            end
-                        endcase
+                        // Unpacking 12 pixels from 64-bit SDRAM data (4 words x 3 pixels)
+                        // Structure: [Word3][Word2][Word1][Word0]
+                        // Each Word: [Ink:1][P2:5][P1:5][P0:5]
+                        
+                        // Note: cur_fetch_x is defined as a wire above
+                        
+                        if (cur_fetch_x < 448) begin
+                            case (px_sub_cnt)
+                                // Word 0
+                                4'd0:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]};
+                                4'd1:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[9:5]};
+                                4'd2:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[14:10]};
+                                // Word 1
+                                4'd3:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[20:16]};
+                                4'd4:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[25:21]};
+                                4'd5:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[30:26]};
+                                // Word 2
+                                4'd6:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[36:32]};
+                                4'd7:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[41:37]};
+                                4'd8:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[46:42]};
+                                // Word 3
+                                4'd9:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[52:48]};
+                                4'd10: line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[57:53]};
+                                4'd11: line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[62:58]};
+                            endcase
+                        end
+
+                        if (px_sub_cnt == 11) begin
+                            px_sub_cnt <= 0;
+                            curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                        end else begin
+                            px_sub_cnt <= px_sub_cnt + 1'd1;
+                        end
                     end
-                end else begin
+                if (curr_sprite_idx == active_sprites_count) begin // All fetched
                     ddram_rd <= 0;
-                    if (h_cnt == 799) begin
-                        sprite_state <= CLEAR_BUFFER;
-                        px_sub_cnt <= 0;
-                    end
+                    sprite_state <= WAIT_START;
                 end
             end
 
-            CLEAR_BUFFER: begin
-                // Sequential clear of the line buffer
-                line_buffer[px_sub_cnt[8:0]] <= 5'd0;
-                if (px_sub_cnt == 447) begin
+            WAIT_START: begin
+                // Wait for verify H-Blank start (approx line end) to begin scanning for NEXT line.
+                // Current line is being displayed (reading from buf_rd).
+                // We write to buf_wr.
+                // Scan starts at 640.
+                if (h_cnt == 640) begin
                     sprite_state <= SCAN_SPRITES;
-                    px_sub_cnt <= 0;
-                end else begin
-                    px_sub_cnt <= px_sub_cnt + 1'd1;
+                    // Prepare for next line
+                    curr_sprite_idx <= 0;
+                    active_sprites_count <= 0;
+                    attr_cnt <= 0;
                 end
             end
         endcase
@@ -177,17 +206,66 @@ always @(posedge clk) begin
     if (!active) begin
         r <= 0; g <= 0; b <= 0;
     end else begin
-        // Mix Background tiles and Sprites (Simple Priority)
-        // If sprite pixel is not 0 (transparent), show sprite.
-        if (line_buffer[px] != 0) begin
-            // Sprite Pixel (Palette lookup placeholder)
-            r <= 8'hFF; g <= 8'hFF; b <= 8'hFF;
+    int px_idx;
+    assign px_idx = px; 
+
+    // Palette RAM Lookup (1 cycle latency usually, but here we drive addr comb?)
+    // This part is tricky. 'pal_addr' is registered output to core.
+    // 'pal_dout' comes back next cycle.
+    // Pipeline:
+    // Cycle 0: Calculate px. Set pal_addr = line_buffer[px].
+    // Cycle 1: Read pal_dout. Output RGB.
+    
+    // We need to pipeline the mixer.
+    reg [4:0] pixel_val;
+    reg       is_sprite;
+    
+    always @(posedge clk) begin
+        // Pipeline Stage 1: Address Setup
+        if (active) begin
+            // Priority: Sprite > BG
+            // Note: line_buffer read is async or sync? Infer M10K -> sync.
+            // But line_buffer is 'reg', so it's logic/registers (or simple RAM).
+            // For 448 pixels, FPGA fits this in regs or MLAB.
+            
+            sprite_data = line_buffer[buf_rd][px];
+            
+            // Clear-on-Read (Clear the pixel we just read for the next frame use)
+            // This avoids the 448-cycle CLEAR_BUFFER state.
+            line_buffer[buf_rd][px] <= 10'd0;
+            
+            if (sprite_data[4:0] != 0) begin
+                pal_addr <= {sprite_data[9:5], sprite_data[4:0]}; // Pal(5) + Color(5)
+                is_sprite <= 1'b1;
+            end else begin
+                // BG Color (Need to implement BG Palette logic too!)
+                // Use Dummy BG for now
+                pal_addr <= {5'd0, 5'd0}; 
+                is_sprite <= 1'b0;
+            end
         end else begin
-            // Background Pixel
-            r <= bg_data[15:11] << 3;
-            g <= bg_data[10:5]  << 2;
-            b <= bg_data[4:0]   << 3;
+            pal_addr <= 0;
+            is_sprite <= 0;
         end
+        
+        // Pipeline Stage 2: Color Output (from pal_dout)
+        // pal_dout is RGB555 (15 bits).
+        // Bit 15 is usually ignored or transparency.
+        // PGM Color format: XRRRRRGGGGGBBBBB
+        
+        if (is_sprite) begin
+            r <= {pal_dout[14:10], 3'b0};
+            g <= {pal_dout[9:5],   3'b0};
+            b <= {pal_dout[4:0],   3'b0};
+        end else begin
+             // BG Placeholder (White for BG, Black for nothing)
+             // r <= 8'h40; g <= 8'h00; b <= 8'h00; // Dark Red Background
+             // Actually, use bg_data from tilemap
+             r <= bg_data[15:11] << 3;
+             g <= bg_data[10:5]  << 2;
+             b <= bg_data[4:0]   << 3;
+        end
+    end
     end
 end
 
