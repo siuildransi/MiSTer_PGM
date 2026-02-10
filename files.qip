@@ -12,5 +12,6 @@ set_global_assignment -name VHDL_FILE rtl/cpu/T80/rtl/vhdl/T80_MCode.vhd
 set_global_assignment -name VHDL_FILE rtl/cpu/T80/rtl/vhdl/T80_ALU.vhd
 set_global_assignment -name VHDL_FILE rtl/cpu/T80/rtl/vhdl/T80_Reg.vhd
 set_global_assignment -name VHDL_FILE rtl/cpu/T80/rtl/vhdl/T80s.vhd
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/dpram_dc.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/dpram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/pgm_video.sv

@@ -43,10 +43,6 @@ wire as_n, uds_n, lds_n, rw_n;
 reg [15:0] cpu68k_din;
 reg cpu68k_dtack_n;
 
-// Main Work RAM (128KB = 64K words)
-(* ramstyle = "no_rw_check" *) reg [7:0] wram_hi [0:65535];
-(* ramstyle = "no_rw_check" *) reg [7:0] wram_lo [0:65535];
-
 // Memory Decoding (PGM Map)
 wire bios_sel  = (adr[23:20] == 4'h0);      // 000000 - 0FFFFF (BIOS en SDRAM)
 wire prom_sel  = (adr[23:20] >= 4'h1 && adr[23:20] <= 4'h3); // 100000 - 3FFFFF (P-ROM en SDRAM)
@@ -55,16 +51,25 @@ wire vram_sel  = (adr[23:17] == 7'b1001000); // 900000 - 907FFF (VRAM)
 wire pal_sel   = (adr[23:17] == 7'b1010000); // A00000 - A011FF (Palette)
 wire vreg_sel  = (adr[23:16] == 8'hB0);      // B00000 - B0FFFF (Registers)
 
-// Work RAM access (Synchronous)
-reg [7:0] wram_rd_h, wram_rd_l;
-always @(posedge fixed_20m_clk) begin
-    if (ram_sel && !rw_n && !as_n) begin
-        if (!uds_n) wram_hi[adr[16:1]] <= d_out[15:8];
-        if (!lds_n) wram_lo[adr[16:1]] <= d_out[7:0];
-    end
-    wram_rd_h <= wram_hi[adr[16:1]];
-    wram_rd_l <= wram_lo[adr[16:1]];
-end
+// --- Main Work RAM (128KB = 64K words) via dpram_dc ---
+// Puerto A: CPU 68k (20MHz) - lectura/escritura
+// Puerto B: Motor de vídeo (video_clk) - solo lectura de sprites
+wire wram_we_h = ram_sel && !rw_n && !as_n && !uds_n;
+wire wram_we_l = ram_sel && !rw_n && !as_n && !lds_n;
+wire [7:0] wram_rd_h, wram_rd_l;
+wire [7:0] wram_vid_h, wram_vid_l;
+
+dpram_dc #(16, 8) wram_hi_inst (
+    .clk_a(fixed_20m_clk), .we_a(wram_we_h), .addr_a(adr[16:1]),
+    .din_a(d_out[15:8]),   .dout_a(wram_rd_h),
+    .clk_b(video_clk),    .addr_b({8'd0, spr_addr_vid[8:1]}), .dout_b(wram_vid_h)
+);
+
+dpram_dc #(16, 8) wram_lo_inst (
+    .clk_a(fixed_20m_clk), .we_a(wram_we_l), .addr_a(adr[16:1]),
+    .din_a(d_out[7:0]),    .dout_a(wram_rd_l),
+    .clk_b(video_clk),    .addr_b({8'd0, spr_addr_vid[8:1]}), .dout_b(wram_vid_l)
+);
 
 // SDRAM Interface & DTACK Logic
 reg  sdram_req;
@@ -152,11 +157,28 @@ assign sample_r = 16'h0000;
 
 // --- Video System ---
 
-// Video RAMs (Infer as M10K)
-(* ramstyle = "no_rw_check" *) reg [15:0] pal_ram [0:2047]; // 4KB Palette
-(* ramstyle = "no_rw_check" *) reg [15:0] vram    [0:16383]; // 32KB VRAM
+// Video RAMs via dpram_dc (CPU write en 20MHz, Video read en video_clk)
+wire [14:1] vram_addr_vid;
+wire [15:0] vram_dout_vid;
+wire vram_we = vram_sel && !rw_n && !as_n;
 
-// Zoom Table / Video Regs
+dpram_dc #(14, 16) vram_inst (
+    .clk_a(fixed_20m_clk), .we_a(vram_we), .addr_a(adr[14:1]),
+    .din_a(d_out),         .dout_a(),
+    .clk_b(video_clk),    .addr_b(vram_addr_vid), .dout_b(vram_dout_vid)
+);
+
+wire [12:1] pal_addr_vid;
+wire [15:0] pal_dout_vid;
+wire pal_we = pal_sel && !rw_n && !as_n;
+
+dpram_dc #(11, 16) pal_inst (
+    .clk_a(fixed_20m_clk), .we_a(pal_we), .addr_a(adr[11:1]),
+    .din_a(d_out),         .dout_a(),
+    .clk_b(video_clk),    .addr_b(pal_addr_vid[11:1]), .dout_b(pal_dout_vid)
+);
+
+// Zoom Table / Video Regs (pequeños, se quedan como registros)
 reg [15:0] zoom_table [0:15];
 reg [15:0] vid_regs   [0:15];
 
@@ -171,20 +193,9 @@ generate
     end
 endgenerate
 
-// Connections
-wire [14:1] vram_addr_vid;
-wire [15:0] vram_dout_vid = vram[vram_addr_vid];
-
-wire [12:1] pal_addr_vid;
-wire [15:0] pal_dout_vid = pal_ram[pal_addr_vid[11:1]];
-
+// Sprite data: lectura síncrona vía puerto B de wram
 wire [10:1] spr_addr_vid;
-// Sprite data comes from Main Work RAM (High/Low split in PGM.sv)
-// We need to fetch 16-bit words from wram_hi/lo using spr_addr_vid
-wire [15:0] spr_dout_vid = {wram_hi[spr_addr_vid[8:1]], wram_lo[spr_addr_vid[8:1]]}; 
-// Note: spr_addr_vid is 10 bits (word address), wram is 256 words deep in this skeleton? 
-// Current skeleton wram is too small (256 bytes). 
-// Accessing index [8:1] (8 bits) is OK for 256 size.
+wire [15:0] spr_dout_vid = {wram_vid_h, wram_vid_l};
 
 // --- SDRAM Arbitrator (50MHz Domain) ---
 
@@ -301,12 +312,9 @@ pgm_video video_inst (
     .blank_n(v_blank)
 );
 
-// CPU write access to Video RAMs
+// CPU write access to Video Regs (VRAM y PAL ya gestionados por dpram_dc)
 always @(posedge fixed_20m_clk) begin
     if (!rw_n && !as_n) begin
-        if (pal_sel)  pal_ram[adr[11:1]] <= d_out; 
-        if (vram_sel) vram[adr[14:1]] <= d_out;
-        
         if (vreg_sel) begin
             if (adr[15:12] == 4'h2) zoom_table[adr[4:1]] <= d_out; // B020xx
             else vid_regs[adr[4:1]] <= d_out;
