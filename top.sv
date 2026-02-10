@@ -60,6 +60,21 @@ assign clk_sys = FPGA_CLK1_50;
 // --- Reset ---
 wire reset;
 
+// --- Video System ---
+wire [7:0] r, g, b;
+wire hs, vs, blank_n;
+
+pgm_video video_gen (
+    .clk(FPGA_CLK1_50), // 50MHz for standard VGA placeholder
+    .reset(reset),
+    .hs(hs),
+    .vs(vs),
+    .r(r),
+    .g(g),
+    .b(b),
+    .blank_n(blank_n)
+);
+
 // --- sys_top MiSTer Framework ---
 sys_top mister_sys (
     .FPGA_CLK1_50(FPGA_CLK1_50),
@@ -78,12 +93,12 @@ sys_top mister_sys (
     .SDRAM_CLK(SDRAM_CLK),
     .SDRAM_CKE(SDRAM_CKE),
 
-    .VGA_R(VGA_R[7:2]),
-    .VGA_G(VGA_G[7:2]),
-    .VGA_B(VGA_B[7:2]),
-    .VGA_HS(VGA_HS),
-    .VGA_VS(VGA_VS),
-    .VGA_EN(VGA_BLANK_N)
+    .VGA_R(r[7:2]),
+    .VGA_G(g[7:2]),
+    .VGA_B(b[7:2]),
+    .VGA_HS(hs),
+    .VGA_VS(vs),
+    .VGA_EN(blank_n)
 );
 
 // --- PGM Core Instance ---

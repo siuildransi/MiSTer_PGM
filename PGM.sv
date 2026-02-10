@@ -71,6 +71,25 @@ always @(posedge fixed_20m_clk) begin
     end
 end
 
+// --- Video Registers (B00000 - B0FFFF) ---
+reg [15:0] video_regs [0:31]; // 32 registers placeholder
+wire vreg_sel = (adr[23:16] == 8'b10110000) && !as_n;
+
+// --- Scroll/Priority RAM (907000 - 9077FF) ---
+reg [15:0] scroll_ram [0:1023];
+wire scroll_sel = (ram_sel && adr[16:11] == 6'b001110); // Check mapping again
+
+always @(posedge fixed_20m_clk) begin
+    if (vreg_sel && !rw_n) begin
+        if (!uds_n) video_regs[adr[5:1]][15:8] <= d_out[15:8];
+        if (!lds_n) video_regs[adr[5:1]][7:0]  <= d_out[7:0];
+    end
+    if (scroll_sel && !rw_n && !as_n) begin
+        if (!uds_n) scroll_ram[adr[10:1]][15:8] <= d_out[15:8];
+        if (!lds_n) scroll_ram[adr[10:1]][7:0]  <= d_out[7:0];
+    end
+end
+
 // DTACK and Data In Multiplexing (Updated)
 always @(*) begin
     cpu68k_dtack_n_reg = 1'b1;
@@ -83,12 +102,15 @@ always @(*) begin
         end else if (ram_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
             cpu68k_din_reg = work_ram[adr[16:1]];
-        end else if (pal_we || (adr[23:13] == 11'b10100000000)) begin
+        end else if (adr[23:13] == 11'b10100000000) begin // Palette
             cpu68k_dtack_n_reg = 1'b0;
             cpu68k_din_reg = palette_ram[adr[12:1]];
         end else if (vram_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
             cpu68k_din_reg = video_ram[adr[14:1]];
+        end else if (vreg_sel) begin
+            cpu68k_dtack_n_reg = 1'b0;
+            cpu68k_din_reg = video_regs[adr[5:1]];
         end else begin
             cpu68k_dtack_n_reg = 1'b1; 
         end
