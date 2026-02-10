@@ -27,6 +27,23 @@ module pgm_video (
     output reg        blank_n
 );
 
+// --- Internal DPRAM Module for guaranteed inference ---
+// Quartus template for Dual Port RAM
+module pgm_dpram #(parameter ADDR_WIDTH=9, parameter DATA_WIDTH=10) (
+    input  clk,
+    input  we,
+    input  [ADDR_WIDTH-1:0] wa,
+    input  [DATA_WIDTH-1:0] wd,
+    input  [ADDR_WIDTH-1:0] ra,
+    output reg [DATA_WIDTH-1:0] rd
+);
+    reg [DATA_WIDTH-1:0] ram [0:(2**ADDR_WIDTH)-1] /* synthesis syn_ramstyle = "no_rw_check, M10K" */;
+    always @(posedge clk) begin
+        if (we) ram[wa] <= wd;
+        rd <= ram[ra];
+    end
+endmodule
+
 // --- Constants ---
 localparam SCAN_SPRITES  = 2'd0;
 localparam FETCH_SPRITES = 2'd1;
@@ -44,7 +61,7 @@ reg        hs_d1, vs_d1, blank_n_d1;
 reg [1:0]  sprite_state;
 reg [9:0]  px_sub_cnt;
 reg [7:0]  curr_sprite_idx;
-reg [4:0]  active_sprites_count; // Reducido a 16 sprites por línea (max 31 antes)
+reg [5:0]  active_sprites_count; // Restaurado a 32 (5 bits + 1)
 reg [2:0]  sprite_attr_cnt;
 
 // Temp regs for scanning
@@ -53,6 +70,7 @@ reg [10:0] temp_sx;
 reg [5:0]  temp_sh;
 reg [15:0] temp_code;
 reg        temp_flipx;
+reg [15:0] x_accum_reg; // X Accumulator for Scaling
 reg [5:0]  source_x_ptr;
 
 struct packed {
@@ -62,35 +80,40 @@ struct packed {
     logic [7:0]  x_zoom;
     logic [11:0] source_y_offset;
     logic        flipx;
-} line_sprites [0:15]; // Reducido de 32 a 16 para ahorrar registros
+} line_sprites [0:31]; // Restaurado a 32 sprites por línea
 
-// --- Memory Inference for Line Buffer ---
-reg [9:0] lb0 [0:511];
-reg [9:0] lb1 [0:511];
-reg lb0_we, lb1_we;
-reg [8:0] lb0_wa, lb1_wa;
-reg [9:0] lb0_wd, lb1_wd;
-reg [9:0] lb0_rd, lb1_rd;
+// --- Buffer RAM Instances ---
+wire [9:0] lb0_rd, lb1_rd;
+reg  lb0_we, lb1_we;
+reg  [8:0] lb_wa;
+reg  [9:0] lb_wd;
 
-always @(posedge clk) begin
-    if (lb0_we) lb0[lb0_wa] <= lb0_wd;
-    lb0_rd <= lb0[px];
-    if (lb1_we) lb1[lb1_wa] <= lb1_wd;
-    lb1_rd <= lb1[px];
-end
+pgm_dpram #(9, 10) lb0_mem (.clk(clk), .we(lb0_we), .wa(lb_wa), .wd(lb_wd), .ra(px[8:0]), .rd(lb0_rd));
+pgm_dpram #(9, 10) lb1_mem (.clk(clk), .we(lb1_we), .wa(lb_wa), .wd(lb_wd), .ra(px[8:0]), .rd(lb1_rd));
+
+wire [9:0] tx_rd;
+reg  tx_we;
+reg  [8:0] tx_wa;
+reg  [9:0] tx_wd;
+pgm_dpram #(9, 10) tx_mem (.clk(clk), .we(tx_we), .wa(tx_wa), .wd(tx_wd), .ra(px[8:0]), .rd(tx_rd));
+
+wire [4:0] bg_rd;
+reg  bg_we;
+reg  [8:0] bg_wa;
+reg  [4:0] bg_wd;
+pgm_dpram #(9, 5) bg_mem (.clk(clk), .we(bg_we), .wa(bg_wa), .wd(bg_wd), .ra(px[8:0]), .rd(bg_rd));
 
 // Tile Engine Regs
 reg [1:0]  tile_state;
 reg [5:0]  tx_fetch_cnt; 
 reg [15:0] tx_tile_idx, tx_tile_attr;
 reg        tx_attr_phase;
-reg [9:0]  tx_buffer [0:447]; 
+reg [3:0]  tile_write_cnt; // Sequential write counter (0-7 or 0-9)
 
 reg [4:0]  bg_fetch_cnt; 
 reg [15:0] bg_tile_idx, bg_tile_attr;
 reg        bg_attr_phase;
 reg [1:0]  bg_sdram_phase;
-reg [4:0]  bg_buffer [0:447]; 
 
 // --- Continuous Assignments ---
 wire [15:0] bg_scrolly = vregs[(16+2)*16 +: 16]; 
@@ -144,7 +167,7 @@ always @(posedge clk) begin
                               {12'd0, line_sprites[curr_sprite_idx].source_y_offset, 5'd0} + 
                               {25'd0, source_x_ptr[5:4]};
             end else if (ddram_dout_ready) ddram_rd <= 1'b0;
-        end else if (tile_state == TILE_SDRAM) begin
+        end else if (tile_state == TILE_SDRAM && tile_write_cnt == 0) begin
             if (!ddram_busy && !ddram_rd) begin
                 ddram_rd <= 1'b1;
                 if (tx_fetch_cnt < 56) 
@@ -162,12 +185,13 @@ always @(posedge clk) begin
         sprite_state <= SCAN_SPRITES;
         curr_sprite_idx <= 0; active_sprites_count <= 0; sprite_attr_cnt <= 0;
         source_x_ptr <= 0; px_sub_cnt <= 0;
-        lb0_we <= 0; lb1_we <= 0;
+        lb0_we <= 0; lb1_we <= 0; lb_wa <= 0; lb_wd <= 0;
     end else begin
-        // Sequential Clear logic using h_cnt
-        if (h_cnt < 448) begin
-            if (buf_wr_idx == 0) begin lb0_we <= 1; lb0_wa <= h_cnt[8:0]; lb0_wd <= 0; end
-            else begin lb1_we <= 1; lb1_wa <= h_cnt[8:0]; lb1_wd <= 0; end
+        // Sequential Clear logic
+        if (h_cnt < 512) begin
+            lb_wa <= h_cnt[8:0]; lb_wd <= 0;
+            if (buf_wr_idx == 0) begin lb0_we <= 1; lb1_we <= 0; end
+            else begin lb1_we <= 1; lb0_we <= 0; end
         end else begin
             lb0_we <= 0; lb1_we <= 0;
             
@@ -187,7 +211,7 @@ always @(posedge clk) begin
                                     automatic int dy = v_cnt - temp_sy;
                                     automatic int sy_off = (dy * zy) >> 6;
                                     if (sy_off < temp_sh) begin
-                                        if (active_sprites_count < 16) begin
+                                        if (active_sprites_count < 32) begin
                                             line_sprites[active_sprites_count].x <= temp_sx;
                                             line_sprites[active_sprites_count].code <= temp_code;
                                             line_sprites[active_sprites_count].x_zoom <= zx;
@@ -210,13 +234,20 @@ always @(posedge clk) begin
                 FETCH_SPRITES: begin
                     if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
                         if (ddram_dout_ready) begin
+                            // Sequential write to RAM (no more loop!)
+                            // We write 1 pixel per clock cycle here for simplicity and safety
                             automatic int dx = line_sprites[curr_sprite_idx].x + px_sub_cnt;
                             if (dx < 448) begin
-                                if (buf_wr_idx == 0) begin lb0_we <= 1; lb0_wa <= dx[8:0]; lb0_wd <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]}; end
-                                else begin lb1_we <= 1; lb1_wa <= dx[8:0]; lb1_wd <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]}; end
+                                lb_wa <= dx[8:0]; lb_wd <= {line_sprites[curr_sprite_idx].pal, ddram_dout[px_sub_cnt*5 +: 5]};
+                                if (buf_wr_idx == 0) begin lb0_we <= 1; lb1_we <= 0; end
+                                else begin lb1_we <= 1; lb0_we <= 0; end
                             end
                             if (px_sub_cnt == 11) begin
-                                px_sub_cnt <= 0; curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                                px_sub_cnt <= 0; 
+                                source_x_ptr <= source_x_ptr + 6'd12;
+                                if (source_x_ptr >= 48) begin
+                                    source_x_ptr <= 0; curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                                end
                             end else px_sub_cnt <= px_sub_cnt + 1'd1;
                         end else begin lb0_we <= 0; lb1_we <= 0; end
                     end else begin lb0_we <= 0; lb1_we <= 0; end
@@ -224,11 +255,11 @@ always @(posedge clk) begin
                 end
 
                 WAIT_START: begin
+                    lb0_we <= 0; lb1_we <= 0;
                     if (h_cnt == 640) begin
                         sprite_state <= SCAN_SPRITES; curr_sprite_idx <= 0; active_sprites_count <= 0; sprite_attr_cnt <= 0;
                     end
                 end
-                default: ;
             endcase
         end
     end
@@ -239,10 +270,12 @@ always @(posedge clk) begin
     if (reset) begin
         tile_state <= TILE_IDLE; tx_fetch_cnt <= 0; bg_fetch_cnt <= 0;
         tx_attr_phase <= 0; bg_attr_phase <= 0; bg_sdram_phase <= 0;
+        tx_we <= 0; bg_we <= 0; tile_write_cnt <= 0;
     end else begin
         case (tile_state)
             TILE_IDLE: if (h_cnt == 0) begin tile_state <= TILE_VRAM; tx_fetch_cnt <= 0; bg_fetch_cnt <= 0; end
             TILE_VRAM: begin
+                tx_we <= 0; bg_we <= 0; tile_write_cnt <= 0;
                 if (tx_fetch_cnt < 56) begin
                     vram_addr <= 14'h2000 + (((tx_vram_row * 64) + ((tx_fetch_cnt + tx_scrollx[8:3]) & 6'h3F)) << 1) + {13'd0, tx_attr_phase};
                     if (tx_attr_phase == 0) begin tx_tile_idx <= vram_dout; tx_attr_phase <= 1; end
@@ -253,17 +286,25 @@ always @(posedge clk) begin
                     else begin bg_tile_attr <= vram_dout; bg_attr_phase <= 0; tile_state <= TILE_SDRAM; bg_sdram_phase <= 0; end
                 end else tile_state <= TILE_IDLE;
             end
-            TILE_SDRAM: if (ddram_dout_ready) begin
+            TILE_SDRAM: if (ddram_dout_ready || tile_write_cnt > 0) begin
                 if (tx_fetch_cnt < 56) begin
-                    for (int i=0; i<8; i=i+1) tx_buffer[tx_fetch_cnt*8 + i] <= {tx_tile_attr[5:1], (tx_tile_line[0] ? ddram_dout[32 + i*4 +: 4] : ddram_dout[i*4 +: 4])};
-                    tx_fetch_cnt <= tx_fetch_cnt + 1'd1; tile_state <= TILE_VRAM;
+                    // Sequential write to RAM (8 pixels)
+                    tx_we <= 1; tx_wa <= (tx_fetch_cnt*8 + tile_write_cnt);
+                    tx_wd <= {tx_tile_attr[5:1], (tx_tile_line[0] ? ddram_dout[32 + tile_write_cnt*4 +: 4] : ddram_dout[tile_write_cnt*4 +: 4])};
+                    if (tile_write_cnt == 7) begin
+                        tx_fetch_cnt <= tx_fetch_cnt + 1'd1; tile_state <= TILE_VRAM;
+                    end else tile_write_cnt <= tile_write_cnt + 1'd1;
                 end else begin
-                    for (int i=0; i<10; i=i+1) if ((bg_fetch_cnt*32 + bg_sdram_phase*10 + i) < 448) bg_buffer[bg_fetch_cnt*32 + bg_sdram_phase*10 + i] <= ddram_dout[i*5 +: 5];
-                    if (bg_sdram_phase == 2) begin bg_sdram_phase <= 0; bg_fetch_cnt <= bg_fetch_cnt + 1'd1; tile_state <= TILE_VRAM; end
-                    else bg_sdram_phase <= bg_sdram_phase + 1'd1;
+                    // Sequential write to BG RAM (10 pixels per SDRAM read)
+                    bg_we <= 1; bg_wa <= (bg_fetch_cnt*32 + bg_sdram_phase*10 + tile_write_cnt);
+                    bg_wd <= ddram_dout[tile_write_cnt*5 +: 5];
+                    if (tile_write_cnt == 9) begin
+                        if (bg_sdram_phase == 2) begin
+                            bg_sdram_phase <= 0; bg_fetch_cnt <= bg_fetch_cnt + 1'd1; tile_state <= TILE_VRAM;
+                        end else begin bg_sdram_phase <= bg_sdram_phase + 1'd1; tile_state <= TILE_VRAM; end // Go fetch next 10 px
+                    end else tile_write_cnt <= tile_write_cnt + 1'd1;
                 end
             end
-            default: ;
         endcase
     end
 end
@@ -274,8 +315,8 @@ always @(posedge clk) begin
         r <= 0; g <= 0; b <= 0; pal_addr <= 0;
     end else begin
         automatic logic [9:0] s_data = (buf_rd_idx == 0) ? lb0_rd : lb1_rd;
-        automatic logic [9:0] t_p    = tx_buffer[px];
-        automatic logic [4:0] b_p    = bg_buffer[px];
+        automatic logic [9:0] t_p    = tx_rd;
+        automatic logic [4:0] b_p    = bg_rd;
         if (t_p[3:0] != 15) pal_addr <= {5'd1, t_p[4:0]}; 
         else if (s_data[4:0] != 0) pal_addr <= {s_data[9:5], s_data[4:0]}; 
         else pal_addr <= {5'd2, b_p}; 
