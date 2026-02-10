@@ -66,6 +66,16 @@ reg [5:0]  src_x_whole;         // Parte entera del acumulador X (píxel fuente 
 reg [1:0]  sdram_word_idx;      // Qué palabra de 64 bits hemos cargado (0-3 para 48px)
 reg        fetch_need_data;     // Necesitamos nueva lectura SDRAM
 
+// Variables auxiliares de cálculo (a nivel de módulo para síntesis)
+reg [11:0] scan_dy;
+reg [19:0] scan_sy_product;
+reg [11:0] scan_sy_off;
+reg [10:0] write_screen_x;
+reg [15:0] write_next_accum;
+reg [9:0]  mix_s_data;
+reg [9:0]  mix_t_p;
+reg [4:0]  mix_b_p;
+
 struct packed {
     logic [10:0] x;
     logic [4:0]  pal;
@@ -226,18 +236,15 @@ always @(posedge clk) begin
                                 // source_y = (dy * zy) >> 6
                                 // Si source_y < height → visible
                                 if (v_cnt >= {1'b0, temp_sy[8:0]}) begin
-                                    reg [11:0] dy;
-                                    reg [19:0] sy_product;
-                                    reg [11:0] sy_off;
-                                    dy = v_cnt - {1'b0, temp_sy[8:0]};
-                                    sy_product = dy * temp_zy;
-                                    sy_off = sy_product[17:6]; // >> 6
-                                    if (sy_off < {6'd0, temp_sh}) begin
+                                    scan_dy = v_cnt - {1'b0, temp_sy[8:0]};
+                                    scan_sy_product = scan_dy * temp_zy;
+                                    scan_sy_off = scan_sy_product[17:6]; // >> 6
+                                    if (scan_sy_off < {6'd0, temp_sh}) begin
                                         if (active_sprites_count < 32) begin
                                             line_sprites[active_sprites_count].x <= temp_sx;
                                             line_sprites[active_sprites_count].code <= temp_code;
                                             line_sprites[active_sprites_count].x_zoom <= temp_zx;
-                                            line_sprites[active_sprites_count].source_y_offset <= sy_off;
+                                            line_sprites[active_sprites_count].source_y_offset <= scan_sy_off;
                                             line_sprites[active_sprites_count].pal <= sprite_dout[13:9];
                                             line_sprites[active_sprites_count].flipx <= temp_flipx;
                                             line_sprites[active_sprites_count].width <= temp_sh; // ancho = height en PGM (sprites cuadrados/rect)
@@ -297,8 +304,7 @@ always @(posedge clk) begin
                 // ============================================================
                 FETCH_WRITE: begin
                     // Calcular posición de pantalla real
-                    reg [10:0] screen_x;
-                    screen_x = line_sprites[fetch_sprite_idx].x + dst_x_pos;
+                    write_screen_x = line_sprites[fetch_sprite_idx].x + dst_x_pos;
                     
                     if (src_x_whole >= 48 || dst_x_pos >= 448) begin
                         // Sprite completado: pasar al siguiente
@@ -317,8 +323,8 @@ always @(posedge clk) begin
                         sprite_state <= FETCH_REQ;
                     end else begin
                         // Escribir píxel actual si no es transparente y está en pantalla
-                        if (screen_x < 448 && src_pixel_value != 0) begin
-                            lb_wa <= screen_x[8:0];
+                        if (write_screen_x < 448 && src_pixel_value != 0) begin
+                            lb_wa <= write_screen_x[8:0];
                             lb_wd <= {line_sprites[fetch_sprite_idx].pal, src_pixel_value};
                             if (buf_wr_idx == 0) begin lb0_we <= 1; lb1_we <= 0; end
                             else begin lb1_we <= 1; lb0_we <= 0; end
@@ -333,17 +339,16 @@ always @(posedge clk) begin
                         // zoom=64 → 1:1 (cada píxel fuente = 1 píxel pantalla)
                         // zoom=128 → 2:1 (cada píxel fuente = 0.5 píxeles pantalla, shrink)
                         // zoom=32 → 0.5:1 (cada píxel fuente = 2 píxeles pantalla, ampliar)
-                        reg [15:0] next_accum;
-                        next_accum = {8'd0, src_x_accum} + {8'd0, line_sprites[fetch_sprite_idx].x_zoom};
-                        if (next_accum >= 16'd64) begin
-                            src_x_accum <= next_accum[7:0] - 8'd64;
+                        write_next_accum = {8'd0, src_x_accum} + {8'd0, line_sprites[fetch_sprite_idx].x_zoom};
+                        if (write_next_accum >= 16'd64) begin
+                            src_x_accum <= write_next_accum[7:0] - 8'd64;
                             src_x_whole <= src_x_whole + 1'd1;
                             // Comprobar si necesitamos nueva palabra SDRAM
                             if (src_x_whole[3:0] == 4'd11) begin
                                 fetch_need_data <= 1;
                             end
                         end else begin
-                            src_x_accum <= next_accum[7:0];
+                            src_x_accum <= write_next_accum[7:0];
                         end
                     end
                 end
@@ -412,16 +417,13 @@ always @(posedge clk) begin
     if (!blank_n_w) begin
         r <= 0; g <= 0; b <= 0; pal_addr <= 0;
     end else begin
-        reg [9:0] s_data;
-        reg [9:0] t_p;
-        reg [4:0] b_p;
-        s_data = (buf_rd_idx == 0) ? lb0_rd : lb1_rd;
-        t_p    = tx_rd;
-        b_p    = bg_rd;
-        if (t_p[3:0] != 15) pal_addr <= {5'd1, t_p[4:0]}; 
-        else if (s_data[4:0] != 0) pal_addr <= {s_data[9:5], s_data[4:0]}; 
-        else pal_addr <= {5'd2, b_p}; 
-        if (t_p[3:0] != 15 || s_data[4:0] != 0 || b_p != 0) begin
+        mix_s_data = (buf_rd_idx == 0) ? lb0_rd : lb1_rd;
+        mix_t_p    = tx_rd;
+        mix_b_p    = bg_rd;
+        if (mix_t_p[3:0] != 15) pal_addr <= {5'd1, mix_t_p[4:0]}; 
+        else if (mix_s_data[4:0] != 0) pal_addr <= {mix_s_data[9:5], mix_s_data[4:0]}; 
+        else pal_addr <= {5'd2, mix_b_p}; 
+        if (mix_t_p[3:0] != 15 || mix_s_data[4:0] != 0 || mix_b_p != 0) begin
             r <= {pal_dout[14:10], 3'b0}; g <= {pal_dout[9:5], 3'b0}; b <= {pal_dout[4:0], 3'b0};
         end else begin r <= 0; g <= 32; b <= 32; end
     end
