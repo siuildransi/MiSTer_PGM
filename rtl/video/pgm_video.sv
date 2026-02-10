@@ -189,6 +189,12 @@ always @(posedge clk) begin
     end
 end
 
+// --- Video Registers (Unpacked) ---
+wire [15:0] bg_scrolly = vregs[(16+2)*16 +: 16]; // B02000
+wire [15:0] bg_scrollx = vregs[(16+3)*16 +: 16]; // B03000
+wire [15:0] tx_scrolly = vregs[(16+5)*16 +: 16]; // B05000
+wire [15:0] tx_scrollx = vregs[(16+6)*16 +: 16]; // B06000
+
 // --- Coordinate Mapping (448x224 inside 640x480) ---
 wire [9:0] px = h_cnt - 10'd96;
 wire [9:0] py = v_cnt - 10'd128;
@@ -196,6 +202,9 @@ wire [9:0] py = v_cnt - 10'd128;
 // TX Layer Address Logic
 wire [4:0] tx_tile_line = (py + tx_scrolly[7:0]) & 8'h07;
 wire [8:0] tx_vram_row  = ((py + tx_scrolly) >> 3) & 8'h1F;
+
+// Layer Buffers
+reg [9:0] tx_buffer [0:447]; 
 
 // --- Tile Fetcher State Machine (Parallel to Sprites) ---
 localparam TILE_IDLE  = 2'd0;
@@ -207,16 +216,12 @@ reg [5:0]  tx_fetch_cnt;
 reg [15:0] tx_tile_idx;
 reg [15:0] tx_tile_attr;
 reg        tx_attr_phase;
-reg [2:0]  tx_vram_sub; // For multiple attribute words if needed
 
 always @(posedge clk) begin
     if (reset) begin
         tile_state <= TILE_IDLE;
         tx_fetch_cnt <= 0;
         tx_attr_phase <= 0;
-        ddram_rd <= 1'b0; // Careful: shared with sprites? 
-        // Need to mux ddram_rd/addr in PGM.sv or here.
-        // For now, let's assume video_inst handles its own rd.
     end else begin
         case (tile_state)
             TILE_IDLE: begin
@@ -240,6 +245,11 @@ always @(posedge clk) begin
             end
             
             TILE_SDRAM: begin
+                if (!ddram_busy && !ddram_rd && !tx_attr_phase) begin // Only if not fetching VRAM
+                   // Note: Shared ddram_rd with sprites must be handled in PGM.sv
+                end
+                
+                // For now, assume this logic just works because pgm_video is the one driving SDRAM in this core
                 if (!ddram_busy && !ddram_rd) begin
                     ddram_rd <= 1'b1;
                     ddram_addr <= {7'd0, tx_tile_idx[11:0], 5'd0} + {24'd0, tx_tile_line[2:1], 3'd0}; 
