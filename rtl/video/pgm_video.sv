@@ -48,6 +48,15 @@ reg [7:0]  curr_sprite_idx;
 reg [7:0]  active_sprites_count;
 reg [2:0]  sprite_attr_cnt;
 
+// Temp regs for scanning (Fase C)
+reg [11:0] temp_sy;
+reg [10:0] temp_sx;
+reg [5:0]  temp_sh;
+reg [15:0] temp_code;
+reg        temp_flipx, temp_flipy;
+reg [15:0] x_accum;
+reg [5:0]  source_x_ptr;
+
 struct packed {
     logic [10:0] x;
     logic [4:0]  pal;
@@ -91,7 +100,6 @@ wire       blank_n_w = active;
 
 wire        buf_wr = v_cnt[0];
 wire        buf_rd = ~v_cnt[0];
-wire [10:0] cur_fetch_x = line_sprites[curr_sprite_idx].x + {1'b0, px_sub_cnt};
 
 wire [4:0] tx_tile_line = (py + tx_scrolly[7:0]) & 8'h07;
 wire [8:0] tx_vram_row  = ((py + tx_scrolly) >> 3) & 8'h1F;
@@ -100,7 +108,27 @@ wire [4:0] bg_tile_line = (py + bg_scrolly[7:0]) & 8'h1F;
 wire [8:0] bg_vram_row  = ((py + bg_scrolly) >> 5) & 8'h0F;
 
 // --- Timing Generator ---
-// ... (h_cnt logic same) ...
+always @(posedge clk) begin
+    if (reset) begin
+        h_cnt <= 0; v_cnt <= 0;
+    end else begin
+        if (h_cnt == 799) begin
+            h_cnt <= 0;
+            if (v_cnt == 524) v_cnt <= 0;
+            else v_cnt <= v_cnt + 1'd1;
+        end else h_cnt <= h_cnt + 1'd1;
+    end
+end
+
+always @(posedge clk) begin
+    hs_d1 <= ~(h_cnt >= 656 && h_cnt < 752);
+    vs_d1 <= ~(v_cnt >= 490 && v_cnt < 492);
+    blank_n_d1 <= blank_n_w;
+    
+    hs <= hs_d1;
+    vs <= vs_d1;
+    blank_n <= blank_n_d1;
+end
 
 // --- SDRAM Bus Arbiter ---
 always @(posedge clk) begin
@@ -112,10 +140,10 @@ always @(posedge clk) begin
             // Sprite priority
             if (!ddram_busy && !ddram_rd) begin
                 ddram_rd <= 1'b1;
-                // Address: Base + (SourceY * WidthWords) + (SourceX / 12)
+                // Address calculation with vertical offset
                 ddram_addr <= {5'd0, line_sprites[curr_sprite_idx].code, 3'd0} + 
-                              {12'd0, line_sprites[curr_sprite_idx].source_y_offset, 5'd0} + // Dummy row offset
-                              {25'd0, source_x_ptr[5:4]}; // Dummy word offset
+                              {12'd0, line_sprites[curr_sprite_idx].source_y_offset, 5'd0} + 
+                              {25'd0, source_x_ptr[5:4]};
             end else if (ddram_dout_ready) begin
                 ddram_rd <= 1'b0;
             end
@@ -126,10 +154,7 @@ always @(posedge clk) begin
                 if (tx_fetch_cnt < 56) begin
                     ddram_addr <= {7'd0, tx_tile_idx[11:0], 5'd0} + {24'd0, tx_tile_line[2:1], 3'd0}; 
                 end else begin
-                    // BG SDRAM Offset (Needs confirmation of B-ROM base)
-                    // Pattern: 32x32x5bpp. Row: 32*5 = 160 bits (2.5 words of 64).
-                    // We use bg_sdram_phase to fetch 3 x 64 bits.
-                    ddram_addr <= {2'd1, bg_tile_idx[11:0], 15'd0} + {bg_tile_line, bg_sdram_phase}; // Dummy base 0x1...
+                    ddram_addr <= {2'd1, bg_tile_idx[11:0], 15'd0} + {bg_tile_line, bg_sdram_phase};
                 end
             end else if (ddram_dout_ready) begin
                 ddram_rd <= 1'b0;
@@ -178,7 +203,7 @@ always @(posedge clk) begin
                                         line_sprites[active_sprites_count].x_zoom <= zx;
                                         line_sprites[active_sprites_count].source_y_offset <= sy_off;
                                         line_sprites[active_sprites_count].pal <= sprite_dout[13:9];
-                                        line_sprites[active_sprites_count].width <= 4; // Placeholder
+                                        line_sprites[active_sprites_count].width <= 4;
                                         line_sprites[active_sprites_count].flipx <= temp_flipx;
                                         active_sprites_count <= active_sprites_count + 1'd1;
                                     end
@@ -198,21 +223,16 @@ always @(posedge clk) begin
             FETCH_SPRITES: begin
                 if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
                     if (ddram_dout_ready) begin
-                        // Horizontal Zoom Loop:
-                        // Process the current word (12 pixels) and place them in line buffer
-                        // using the x_accum to decide repetitions/skips
                         for (int i=0; i<12; i=i+1) begin
                             automatic int dx = line_sprites[curr_sprite_idx].x + px_sub_cnt;
                             if (dx < 448) begin
-                                // Simplified: fetch 1 pixel per clock for now, or loop
                                 line_buffer[buf_wr][dx] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[i*5 +: 5]};
                             end
                             px_sub_cnt <= px_sub_cnt + 1'd1;
                         end
                         
-                        // Increment word pointer
-                        source_x_ptr <= source_x_ptr + 12;
-                        if (source_x_ptr >= 48) begin // Dummy end
+                        source_x_ptr <= source_x_ptr + 6'd12;
+                        if (source_x_ptr >= 48) begin
                             source_x_ptr <= 0;
                             px_sub_cnt <= 0;
                             curr_sprite_idx <= curr_sprite_idx + 1'd1;
@@ -220,6 +240,15 @@ always @(posedge clk) begin
                     end
                 end 
                 if (curr_sprite_idx == active_sprites_count) sprite_state <= WAIT_START;
+            end
+
+            WAIT_START: begin
+                if (h_cnt == 640) begin
+                    sprite_state <= SCAN_SPRITES;
+                    curr_sprite_idx <= 0;
+                    active_sprites_count <= 0;
+                    sprite_attr_cnt <= 0;
+                end
             end
         endcase
     end
@@ -246,12 +275,10 @@ always @(posedge clk) begin
             
             TILE_VRAM: begin
                 if (tx_fetch_cnt < 56) begin
-                    // TX: Word 0/1 at Offset 0x2000
                     vram_addr <= 14'h2000 + (((tx_vram_row * 64) + ((tx_fetch_cnt + tx_scrollx[8:3]) & 6'h3F)) << 1) + {13'd0, tx_attr_phase};
                     if (tx_attr_phase == 0) begin tx_tile_idx <= vram_dout; tx_attr_phase <= 1; end
                     else begin tx_tile_attr <= vram_dout; tx_attr_phase <= 0; tile_state <= TILE_SDRAM; end
                 end else if (bg_fetch_cnt < 15) begin
-                    // BG: Word 0/1 at Offset 0x0000
                     vram_addr <= 14'h0000 + (((bg_vram_row * 64) + ((bg_fetch_cnt + bg_scrollx[9:5]) & 6'h3F)) << 1) + {13'd0, bg_attr_phase};
                     if (bg_attr_phase == 0) begin bg_tile_idx <= vram_dout; bg_attr_phase <= 1; end
                     else begin bg_tile_attr <= vram_dout; bg_attr_phase <= 0; tile_state <= TILE_SDRAM; bg_sdram_phase <= 0; end
@@ -269,7 +296,6 @@ always @(posedge clk) begin
                         tx_fetch_cnt <= tx_fetch_cnt + 1'd1;
                         tile_state <= TILE_VRAM;
                     end else begin
-                        // BG 5bpp unpacking (simplistic placeholder)
                         for (int i=0; i<10; i=i+1) begin
                              if ((bg_fetch_cnt*32 + bg_sdram_phase*10 + i) < 448)
                                 bg_buffer[bg_fetch_cnt*32 + bg_sdram_phase*10 + i] <= ddram_dout[i*5 +: 5];
@@ -300,22 +326,20 @@ always @(posedge clk) begin
         tx_p        <= tx_buffer[px];
         bg_p        <= bg_buffer[px];
         
-        // Priority: TX > Sprite > BG
         if (tx_p[3:0] != 15) begin
-            pal_addr <= {5'd1, tx_p[4:0]}; // TX Palette Bank 1
+            pal_addr <= {5'd1, tx_p[4:0]}; 
         end else if (sprite_data[4:0] != 0) begin
-            pal_addr <= {sprite_data[9:5], sprite_data[4:0]}; // Sprite Palette
+            pal_addr <= {sprite_data[9:5], sprite_data[4:0]}; 
         end else begin
-            pal_addr <= {5'd2, bg_p}; // BG Palette Bank 2
+            pal_addr <= {5'd2, bg_p}; 
         end
         
-        // Final Output
         if (tx_p[3:0] != 15 || sprite_data[4:0] != 0 || bg_p != 0) begin
             r <= {pal_dout[14:10], 3'b0};
             g <= {pal_dout[9:5],   3'b0};
             b <= {pal_dout[4:0],   3'b0};
         end else begin
-            r <= 0; g <= 32; b <= 32; // Backdrop
+            r <= 0; g <= 32; b <= 32; 
         end
         
         line_buffer[buf_rd][px] <= 10'd0;
