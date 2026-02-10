@@ -1,5 +1,6 @@
 set_global_assignment -name SYSTEMVERILOG_FILE emu.sv
 set_global_assignment -name SYSTEMVERILOG_FILE PGM.sv
+set_global_assignment -name VERILOG_FILE rtl/pll.v
 
 # CPUs
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/fx68k/fx68k.sv
