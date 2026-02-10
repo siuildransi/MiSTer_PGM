@@ -13,11 +13,11 @@ module PGM (
     // Video Engine interface
     input  [13:1] renderer_vram_addr,
     output [15:0] renderer_vram_dout,
-    output [12:1] renderer_pal_addr,
-    input  [15:0] renderer_pal_dout,
+    input  [12:1] renderer_pal_addr,
+    output [15:0] renderer_pal_dout,
     output [511:0] vregs_dout,
-    output [10:1] sprite_ram_addr,
-    input  [15:0] sprite_ram_dout,
+    input  [10:1] sprite_ram_addr,
+    output [15:0] sprite_ram_dout,
 
     // Audio Outputs
     output [15:0] sample_l,
