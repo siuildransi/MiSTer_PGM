@@ -164,14 +164,14 @@ always @(posedge clk) begin
                         end
                         end
                     end
-                end
+                end // Close active_sprites logic
                 
-                // Transition Check (Must be INSIDE FETCH_SPRITES)
+                // Transition Check (Now outside the active loop)
                 if (curr_sprite_idx == active_sprites_count) begin
                     ddram_rd <= 0;
                     sprite_state <= WAIT_START;
                 end
-            end
+            end // Close FETCH_SPRITES state
 
             WAIT_START: begin
                 // Wait for verify H-Blank start (approx line end) to begin scanning for NEXT line.
