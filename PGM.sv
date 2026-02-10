@@ -26,7 +26,6 @@ module PGM (
 
 // --- ROM Banking ---
 reg [7:0] rom_bank;
-wire [23:1] bank_adr = {rom_bank[4:0], adr[18:1]}; // 512KB banks
 
 // --- 68000 Main CPU (fx68k) ---
 wire [23:1] adr;
@@ -35,100 +34,109 @@ wire as_n, uds_n, lds_n, rw_n;
 reg [15:0] cpu68k_din_reg;
 reg cpu68k_dtack_n_reg;
 
-// --- Demon Front Protection (ARM7 HLE) ---
+// --- Protection Placeholder ---
 wire prot_sel = (adr[23:20] == 4'h1) && !as_n;
 reg [15:0] prot_dout;
 
 // Memory Map Decoding
-// 000000 - 01FFFF: BIOS ROM (128KB, reduced to 16KB placeholder)
-// 800000 - 81FFFF: Main Work RAM (128KB, reduced to 16KB placeholder)
-// 900000 - 905FFF: Video RAM (24KB)
-
 wire bios_sel = (adr[23:17] == 7'b0000000); // 000000-01FFFF
 wire ram_sel  = (adr[23:17] == 7'b1000000); // 800000-81FFFF
-wire vram_sel = (adr[23:16] == 8'h90) && (adr[15:14] == 2'b00); // 900000-903FFF + 904000-905FFF
-
-// ==========================================================================
-// Block RAM memories with M10K inference
-// All reads MUST be synchronous (registered) for M10K block RAM inference.
-// Sizes reduced until SDRAM controller is implemented.
-// ==========================================================================
-
-// --- BIOS ROM (16 KB placeholder — real core uses SDRAM) ---
-(* ramstyle = "M10K" *) reg [15:0] bios_rom [0:8191]; // 8K x 16 = 16KB
-wire bios_we = ioctl_download && (ioctl_index == 0) && ioctl_wr;
-
-// --- Work RAM (16 KB placeholder — real core uses SDRAM) ---
-(* ramstyle = "M10K" *) reg [15:0] work_ram [0:8191]; // 8K x 16 = 16KB
-wire ram_we = ram_sel && !rw_n && !as_n;
-
-// --- Palette RAM (A00000 - A011FF, ~4.5 KB) ---
-(* ramstyle = "M10K" *) reg [15:0] palette_ram [0:2303]; // 2304 x 16
-
-wire pal_sel = (adr[23:13] == 11'b10100000000) && !as_n;
-wire pal_we  = pal_sel && !rw_n;
-
-// --- Video RAM (Tilemaps, 24KB) ---
-(* ramstyle = "M10K" *) reg [15:0] video_ram [0:12287]; // 12K x 16 = 24KB
-wire vram_we = vram_sel && !rw_n && !as_n;
-
-// --- Video Registers (B00000 - B0FFFF, 32 x 16 = 64 bytes, stays as regs) ---
-reg [15:0] video_regs [0:31];
+wire vram_sel = (adr[23:16] == 8'h90) && (adr[15:14] == 2'b00);
+wire pal_sel  = (adr[23:13] == 11'b10100000000) && !as_n;
 wire vreg_sel = (adr[23:16] == 8'hB0) && !as_n;
-
-// --- Scroll/Priority RAM (907000 - 907FFF) ---
-(* ramstyle = "M10K" *) reg [15:0] scroll_ram [0:2047]; // 2K x 16 = 4KB
 wire scroll_sel = (adr[23:12] == 12'h907) && !as_n;
 
 // ==========================================================================
-// Synchronous Write Ports (68k domain)
+// Block RAMs — Split into separate 8-bit Hi/Lo arrays for M10K inference.
+// Quartus Lite cannot infer block RAM from partial byte writes to 16-bit
+// arrays. Splitting into 8-bit arrays gives clean full-word writes.
+// ==========================================================================
+
+// --- BIOS ROM (16 KB placeholder) ---
+(* ramstyle = "no_rw_check" *) reg [7:0] bios_hi [0:8191];
+(* ramstyle = "no_rw_check" *) reg [7:0] bios_lo [0:8191];
+wire bios_we = ioctl_download && (ioctl_index == 0) && ioctl_wr;
+
+// --- Work RAM (16 KB placeholder) ---
+(* ramstyle = "no_rw_check" *) reg [7:0] wram_hi [0:8191];
+(* ramstyle = "no_rw_check" *) reg [7:0] wram_lo [0:8191];
+
+// --- Palette RAM (~4.5 KB) ---
+(* ramstyle = "no_rw_check" *) reg [7:0] pal_hi [0:2303];
+(* ramstyle = "no_rw_check" *) reg [7:0] pal_lo [0:2303];
+
+// --- Video RAM (24 KB) ---
+(* ramstyle = "no_rw_check" *) reg [7:0] vram_hi [0:12287];
+(* ramstyle = "no_rw_check" *) reg [7:0] vram_lo [0:12287];
+
+// --- Video Registers (tiny, stays as logic) ---
+reg [15:0] video_regs [0:31];
+
+// --- Scroll RAM (4 KB) ---
+(* ramstyle = "no_rw_check" *) reg [7:0] scroll_hi [0:2047];
+(* ramstyle = "no_rw_check" *) reg [7:0] scroll_lo [0:2047];
+
+// ==========================================================================
+// Synchronous Write Ports
 // ==========================================================================
 always @(posedge fixed_20m_clk) begin
-    if (bios_we)
-        bios_rom[ioctl_addr[13:1]] <= ioctl_dout;
-
-    if (ram_we) begin
-        if (!uds_n) work_ram[adr[13:1]][15:8] <= d_out[15:8];
-        if (!lds_n) work_ram[adr[13:1]][7:0]  <= d_out[7:0];
+    // BIOS ROM load via ioctl
+    if (bios_we) begin
+        bios_hi[ioctl_addr[13:1]] <= ioctl_dout[15:8];
+        bios_lo[ioctl_addr[13:1]] <= ioctl_dout[7:0];
     end
 
-    if (pal_we) begin
-        if (!uds_n) palette_ram[adr[12:1]][15:8] <= d_out[15:8];
-        if (!lds_n) palette_ram[adr[12:1]][7:0]  <= d_out[7:0];
+    // Work RAM
+    if (ram_sel && !rw_n && !as_n) begin
+        if (!uds_n) wram_hi[adr[13:1]] <= d_out[15:8];
+        if (!lds_n) wram_lo[adr[13:1]] <= d_out[7:0];
     end
 
-    if (vram_we) begin
-        if (!uds_n) video_ram[adr[14:1]][15:8] <= d_out[15:8];
-        if (!lds_n) video_ram[adr[14:1]][7:0]  <= d_out[7:0];
+    // Palette RAM
+    if (pal_sel && !rw_n) begin
+        if (!uds_n) pal_hi[adr[12:1]] <= d_out[15:8];
+        if (!lds_n) pal_lo[adr[12:1]] <= d_out[7:0];
     end
 
+    // Video RAM
+    if (vram_sel && !rw_n && !as_n) begin
+        if (!uds_n) vram_hi[adr[14:1]] <= d_out[15:8];
+        if (!lds_n) vram_lo[adr[14:1]] <= d_out[7:0];
+    end
+
+    // Video Registers (small, stays as logic)
     if (vreg_sel && !rw_n) begin
         if (!uds_n) video_regs[adr[5:1]][15:8] <= d_out[15:8];
         if (!lds_n) video_regs[adr[5:1]][7:0]  <= d_out[7:0];
     end
 
+    // Scroll RAM
     if (scroll_sel && !rw_n) begin
-        if (!uds_n) scroll_ram[adr[11:1]][15:8] <= d_out[15:8];
-        if (!lds_n) scroll_ram[adr[11:1]][7:0]  <= d_out[7:0];
+        if (!uds_n) scroll_hi[adr[11:1]] <= d_out[15:8];
+        if (!lds_n) scroll_lo[adr[11:1]] <= d_out[7:0];
     end
 end
 
 // ==========================================================================
-// Synchronous Read Ports (68k domain) — Required for M10K inference
-// Data is registered: available 1 clock after address presented.
+// Synchronous Read Ports (required for block RAM inference)
 // ==========================================================================
-reg [15:0] bios_rdata, ram_rdata, pal_rdata, vram_rdata;
+reg [7:0] bios_rd_h, bios_rd_l;
+reg [7:0] wram_rd_h, wram_rd_l;
+reg [7:0] pal_rd_h, pal_rd_l;
+reg [7:0] vram_rd_h, vram_rd_l;
 
 always @(posedge fixed_20m_clk) begin
-    bios_rdata <= bios_rom[adr[13:1]];
-    ram_rdata  <= work_ram[adr[13:1]];
-    pal_rdata  <= palette_ram[adr[12:1]];
-    vram_rdata <= video_ram[adr[14:1]];
+    bios_rd_h <= bios_hi[adr[13:1]];
+    bios_rd_l <= bios_lo[adr[13:1]];
+    wram_rd_h <= wram_hi[adr[13:1]];
+    wram_rd_l <= wram_lo[adr[13:1]];
+    pal_rd_h  <= pal_hi[adr[12:1]];
+    pal_rd_l  <= pal_lo[adr[12:1]];
+    vram_rd_h <= vram_hi[adr[14:1]];
+    vram_rd_l <= vram_lo[adr[14:1]];
 end
 
-// DTACK and Data In Multiplexing
-// Uses registered (synchronous) read data from block RAMs.
-// Video regs are small enough to stay combinational.
+// DTACK and Data Input Multiplexing
 always @(*) begin
     cpu68k_dtack_n_reg = 1'b1;
     cpu68k_din_reg = 16'hFFFF;
@@ -136,19 +144,19 @@ always @(*) begin
     if (!as_n) begin
         if (bios_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
-            cpu68k_din_reg = bios_rdata;
+            cpu68k_din_reg = {bios_rd_h, bios_rd_l};
         end else if (ram_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
-            cpu68k_din_reg = ram_rdata;
+            cpu68k_din_reg = {wram_rd_h, wram_rd_l};
         end else if (pal_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
-            cpu68k_din_reg = pal_rdata;
+            cpu68k_din_reg = {pal_rd_h, pal_rd_l};
         end else if (vram_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
-            cpu68k_din_reg = vram_rdata;
+            cpu68k_din_reg = {vram_rd_h, vram_rd_l};
         end else if (vreg_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
-            cpu68k_din_reg = video_regs[adr[5:1]]; // Small, stays combinational
+            cpu68k_din_reg = video_regs[adr[5:1]];
         end else if (prot_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
             cpu68k_din_reg = prot_dout;
@@ -157,7 +165,7 @@ always @(*) begin
 end
 
 // ==========================================================================
-// 68000 CPU Instantiation
+// 68000 CPU
 // ==========================================================================
 fx68k main_cpu (
     .clk(fixed_20m_clk),
@@ -192,18 +200,17 @@ wire [7:0]  z_dout;
 wire z_mreq_n, z_iorq_n, z_rd_n, z_wr_n;
 reg [7:0]   z80_din_reg;
 
-// Z80 Work RAM (4 KB placeholder — real PGM has 64KB)
-(* ramstyle = "M10K" *) reg [7:0] sound_ram [0:4095]; // 4K x 8 = 4KB
-wire z_ram_we = !z_mreq_n && !z_wr_n;
+// Z80 Work RAM (4 KB placeholder)
+(* ramstyle = "no_rw_check" *) reg [7:0] sound_ram [0:4095];
 
-// Sound Latches (Communication between 68k and Z80)
 reg [7:0] latch1, latch2, latch3;
 
 // Synchronous write + read for Z80 sound RAM
 reg [7:0] sram_rdata;
 
 always @(posedge fixed_8m_clk) begin
-    if (z_ram_we) sound_ram[z_adr[11:0]] <= z_dout;
+    if (!z_mreq_n && !z_wr_n)
+        sound_ram[z_adr[11:0]] <= z_dout;
     sram_rdata <= sound_ram[z_adr[11:0]];
 end
 
@@ -228,7 +235,7 @@ ics2115 sound_chip (
 assign sample_l = s_l;
 assign sample_r = s_r;
 
-// Z80 Data In Multiplexing (uses synchronous read from sound_ram)
+// Z80 Data Mux
 always @(*) begin
     z80_din_reg = 8'hFF;
     if (!z_mreq_n) begin
@@ -244,7 +251,7 @@ always @(*) begin
     end
 end
 
-// 68k Access to Sound Latches
+// 68k Sound Latch Writes
 wire latch_sel    = (adr[23:1] == 23'h600001) ||
                     (adr[23:1] == 23'h600002) ||
                     (adr[23:1] == 23'h600006);
@@ -279,21 +286,24 @@ T80s sound_cpu (
 );
 
 // ==========================================================================
-// Video Interface Exports (synchronous reads for M10K)
+// Video Interface Exports (synchronous reads, second port of dual-port RAM)
 // ==========================================================================
-reg [15:0] vram_export_rd, pal_export_rd, sprite_export_rd;
+reg [7:0] vexp_h, vexp_l, pexp_h, pexp_l, sexp_h, sexp_l;
 
 always @(posedge fixed_20m_clk) begin
-    vram_export_rd   <= video_ram[renderer_vram_addr];
-    pal_export_rd    <= palette_ram[renderer_pal_addr];
-    sprite_export_rd <= work_ram[sprite_ram_addr];
+    vexp_h <= vram_hi[renderer_vram_addr];
+    vexp_l <= vram_lo[renderer_vram_addr];
+    pexp_h <= pal_hi[renderer_pal_addr];
+    pexp_l <= pal_lo[renderer_pal_addr];
+    sexp_h <= wram_hi[sprite_ram_addr];
+    sexp_l <= wram_lo[sprite_ram_addr];
 end
 
-assign renderer_vram_dout = vram_export_rd;
-assign renderer_pal_dout  = pal_export_rd;
-assign sprite_ram_dout    = sprite_export_rd;
+assign renderer_vram_dout = {vexp_h, vexp_l};
+assign renderer_pal_dout  = {pexp_h, pexp_l};
+assign sprite_ram_dout    = {sexp_h, sexp_l};
 
-// Video regs exported as flat bus (small enough to stay as regs)
+// Video regs flat bus export
 genvar i;
 generate
     for (i=0; i<32; i=i+1) begin : vregs_export
