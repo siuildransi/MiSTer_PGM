@@ -16,6 +16,7 @@ module pgm_video (
     output reg [28:0] ddram_addr,
     input      [63:0] ddram_dout,
     input             ddram_busy,
+    input             ddram_dout_ready, // Added
 
     // Video Output
     output reg        hs,
@@ -130,20 +131,18 @@ always @(posedge clk) begin
             
             FETCH_SPRITES: begin
                 if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
-                    if (!ddram_busy) begin
-                        // Unpacking 12 pixels from 64-bit SDRAM data (4 words x 3 pixels)
-                        // Structure: [Word3][Word2][Word1][Word0]
-                        // Each Word: [Ink:1][P2:5][P1:5][P0:5]
+                    if (!ddram_busy && !ddram_rd) begin
+                        // Request data
+                        ddram_rd <= 1'b1;
+                        ddram_addr <= {5'd0, line_sprites[curr_sprite_idx].code, 3'd0} + px_sub_cnt;
+                    end
+                    
+                    if (ddram_dout_ready) begin
+                        // Recibimos los 12 píxeles (4 palabras de 3 píxeles) en 64 bits
+                        ddram_rd <= 1'b0; // Terminar petición actual
                         
-                        // Note: cur_fetch_x is defined as a wire above
-                        
-                        if (cur_fetch_x < 448) begin
-                            // Drive SDRAM Read
-                            ddram_rd <= 1'b1;
-                            // Placeholder Address: Base + (Code * 4 words per tile) + sub_cnt/4? 
-                            // This is a dummy address for now to satisfy synthesis.
-                            ddram_addr <= {5'd0, line_sprites[curr_sprite_idx].code, 3'd0} + px_sub_cnt; 
-                            
+                        // Unpacking (como estaba antes pero ahora síncrono con ready)
+                        // ... logic below will use ddram_dout ...
                             case (px_sub_cnt)
                                 // Word 0
                                 4'd0:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]};

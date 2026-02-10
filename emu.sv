@@ -142,6 +142,7 @@ wire [15:0] sample_l, sample_r;
 PGM pgm_core (
     .fixed_20m_clk(clk_20m),
     .fixed_8m_clk(clk_8m),
+    .fixed_50m_clk(CLK_50M),
     .video_clk(clk_vid),
     .reset(RESET || ioctl_download),
     .ioctl_download(ioctl_download),
@@ -158,6 +159,7 @@ PGM pgm_core (
     .ddram_be(DDRAM_BE),
     .ddram_dout(DDRAM_DOUT),
     .ddram_busy(DDRAM_BUSY),
+    .ddram_dout_ready(DDRAM_DOUT_READY),
     
     // Audio
     .sample_l(sample_l),
