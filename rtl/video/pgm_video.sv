@@ -59,11 +59,12 @@ end
 // Word: [P2:5, P1:5, P0:5, Ignored:1] -> This needs verification against MAME.
 // Typical PGM A-ROM packing: 3 pixels per 16-bit word.
 
-localparam SCAN_SPRITES = 0;
-localparam FETCH_SPRITES = 1;
-localparam RENDER_LINE = 2;
+localparam SCAN_SPRITES  = 2'd0;
+localparam FETCH_SPRITES = 2'd1;
+localparam CLEAR_BUFFER  = 2'd2;
 
 reg [1:0]  sprite_state;
+reg [9:0]  px_sub_cnt;
 reg [7:0]  curr_sprite_idx;
 reg [7:0]  active_sprites_count;
 
@@ -113,32 +114,43 @@ always @(posedge clk) begin
             FETCH_SPRITES: begin
                 if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
                     if (!ddram_busy) begin
-                        // PGM Sprites: 5bpp unpacking. 3 pixels per 16-bit word.
-                        // Word: [P2:5, P1:5, P0:5, ?:1] 
-                        // Note: Real hardware fetches A and B ROMs.
-                        // For now, let's unpack the 16-bit word we have from SDRAM.
-                        
-                        // Zoom Logic: Use x_zoom to decide if we skip outputting a pixel
-                        // (Shrinking algorithm).
-                        
-                        if (line_sprites[curr_sprite_idx].x < 448) begin
-                            // Unpack 3 pixels from the word
-                            line_buffer[line_sprites[curr_sprite_idx].x]   <= ddram_dout[4:0];
-                            if (line_sprites[curr_sprite_idx].x + 1 < 448)
-                                line_buffer[line_sprites[curr_sprite_idx].x+1] <= ddram_dout[9:5];
-                            if (line_sprites[curr_sprite_idx].x + 2 < 448)
-                                line_buffer[line_sprites[curr_sprite_idx].x+2] <= ddram_dout[14:10];
-                        end
-                        
-                        curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                        // Sequential pixel unpacking to avoid multi-port BRAM violation
+                        case (px_sub_cnt)
+                            2'd0: begin
+                                if (line_sprites[curr_sprite_idx].x < 448)
+                                    line_buffer[line_sprites[curr_sprite_idx].x] <= ddram_dout[4:0];
+                                px_sub_cnt <= 2'd1;
+                            end
+                            2'd1: begin
+                                if (line_sprites[curr_sprite_idx].x + 1 < 448)
+                                    line_buffer[line_sprites[curr_sprite_idx].x+1] <= ddram_dout[9:5];
+                                px_sub_cnt <= 2'd2;
+                            end
+                            2'd2: begin
+                                if (line_sprites[curr_sprite_idx].x + 2 < 448)
+                                    line_buffer[line_sprites[curr_sprite_idx].x+2] <= ddram_dout[14:10];
+                                px_sub_cnt <= 2'd0;
+                                curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                            end
+                        endcase
                     end
                 end else begin
                     ddram_rd <= 0;
                     if (h_cnt == 799) begin
-                        sprite_state <= SCAN_SPRITES;
-                        // Clear line buffer for next line
-                        // (This should be done more efficiently in a real line-buffer design)
+                        sprite_state <= CLEAR_BUFFER;
+                        px_sub_cnt <= 0;
                     end
+                end
+            end
+
+            CLEAR_BUFFER: begin
+                // Sequential clear of the line buffer
+                line_buffer[px_sub_cnt[8:0]] <= 5'd0;
+                if (px_sub_cnt == 447) begin
+                    sprite_state <= SCAN_SPRITES;
+                    px_sub_cnt <= 0;
+                end else begin
+                    px_sub_cnt <= px_sub_cnt + 1'd1;
                 end
             end
         endcase

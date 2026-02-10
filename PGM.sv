@@ -28,27 +28,17 @@ module PGM (
 reg [7:0] rom_bank;
 wire [23:1] bank_adr = {rom_bank[4:0], adr[18:1]}; // 512KB banks
 
-// --- Demon Front Protection (ARM7 HLE) ---
-// 100000 - 1FFFFF: Protection Area
-wire prot_sel = (adr[23:20] == 4'h1) && !as_n;
-reg [15:0] prot_dout;
-
-always @(*) begin
-    prot_dout = 16'hFFFF;
-    if (prot_sel) begin
-        // Demon Front protection bypass logic
-        // Based on research, we often need to return specific values 
-        // to pass the ARM check. Returning 0 is a common first attempt.
-        prot_dout = 16'h0000; 
-    end
-end
-
 // --- 68000 Main CPU (fx68k) ---
 wire [23:1] adr;
 wire [15:0] d_out;
 wire as_n, uds_n, lds_n, rw_n;
 reg [15:0] cpu68k_din_reg;
 reg cpu68k_dtack_n_reg;
+
+// --- Demon Front Protection (ARM7 HLE) ---
+// 100000 - 1FFFFF: Protection Area
+wire prot_sel = (adr[23:20] == 4'h1) && !as_n;
+reg [15:0] prot_dout;
 
 // Memory Map Decoding
 // 000000 - 01FFFF: BIOS ROM (ROM 1)
@@ -57,7 +47,7 @@ reg cpu68k_dtack_n_reg;
 
 wire bios_sel = (adr[23:17] == 7'b0000000); // 000000-01FFFF
 wire ram_sel  = (adr[23:17] == 7'b1000000); // 800000-81FFFF
-wire vram_sel = (adr[23:17] == 7'b1001000) && (adr[16:15] == 2'b00); // 900000-907FFF (approx)
+wire vram_sel = (adr[23:16] == 8'h90) && (adr[15:10] < 6'h18); // 900000-905FFF
 
 // --- BIOS ROM (128 KB) ---
 reg [15:0] bios_rom [0:65535];
@@ -97,12 +87,12 @@ always @(posedge fixed_20m_clk) begin
 end
 
 // --- Video Registers (B00000 - B0FFFF) ---
-reg [15:0] video_regs [0:31]; // 32 registers placeholder
-wire vreg_sel = (adr[23:16] == 8'b10110000) && !as_n;
+reg [15:0] video_regs [0:31]; 
+wire vreg_sel = (adr[23:16] == 8'hB0) && !as_n;
 
-// --- Scroll/Priority RAM (907000 - 9077FF) ---
-reg [15:0] scroll_ram [0:1023];
-wire scroll_sel = (ram_sel && adr[16:11] == 6'b001110); // Check mapping again
+// --- Scroll/Priority RAM (907000 - 907FFF) ---
+reg [15:0] scroll_ram [0:2047];
+wire scroll_sel = (adr[23:12] == 12'h907) && !as_n; 
 
 always @(posedge fixed_20m_clk) begin
     if (vreg_sel && !rw_n) begin
