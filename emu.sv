@@ -25,10 +25,13 @@ module emu (
     input  [8:0]  VIDEO_ARX,
     input  [8:0]  VIDEO_ARY,
 
+    input         CLK_AUDIO,
     output [15:0] AUDIO_L,
     output [15:0] AUDIO_R,
     output        AUDIO_S,
     output [1:0]  AUDIO_MIX,
+
+    input  [31:0] ADC_BUS,
 
     output [7:0]  LED_USER,
     output [7:0]  LED_POWER,
@@ -39,7 +42,7 @@ module emu (
 
     // SDRAM
     inout  [15:0] SDRAM_DQ,
-    output [12:0] SDRAM_A,
+    output [12:1] SDRAM_A,
     output        SDRAM_DQML,
     output        SDRAM_DQMH,
     output [1:0]  SDRAM_BA,
@@ -56,10 +59,30 @@ module emu (
     output [3:0]  DDRAM_BURSTCNT,
     input         DDRAM_BUSY,
     input  [63:0] DDRAM_DOUT,
+    input         DDRAM_DOUT_READY,
     output        DDRAM_RD,
     output [63:0] DDRAM_DIN,
     output [7:0]  DDRAM_BE,
-    output        DDRAM_WE
+    output        DDRAM_WE,
+
+    // SD Card
+    output        SD_SCK,
+    output        SD_MOSI,
+    input         SD_MISO,
+    output        SD_CS,
+    input         SD_CD,
+
+    // UART
+    input         UART_CTS,
+    output        UART_RTS,
+    input         UART_RXD,
+    output        UART_TXD,
+    output        UART_DTR,
+    input         UART_DSR,
+
+    // USER I/O
+    output [6:1]  USER_OUT,
+    input  [6:1]  USER_IN
 );
 
 // --- HPS IO ---
@@ -158,6 +181,23 @@ assign VGA_B = b;
 assign VGA_HS = hs;
 assign VGA_VS = vs;
 assign VGA_DE = blank_n;
+assign VGA_F1 = 1'b0;
+assign VGA_SCALER = 2'b00;
+assign VGA_DISABLE = 1'b0;
+
+assign LED_USER  = 8'h00;
+assign LED_POWER = 8'h01;
+assign LED_DISK  = 8'h00;
+
+assign SD_SCK  = 1'b0;
+assign SD_MOSI = 1'b0;
+assign SD_CS   = 1'b1;
+
+assign UART_RTS = 1'b0;
+assign UART_TXD = 1'b1;
+assign UART_DTR = 1'b1;
+
+assign USER_OUT = 6'b000000;
 
 // --- Clocks ---
 wire clk_20m, clk_8m;
