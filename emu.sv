@@ -48,7 +48,18 @@ module emu (
     output        SDRAM_nRAS,
     output        SDRAM_nCAS,
     output        SDRAM_CLK,
-    output        SDRAM_CKE
+    output        SDRAM_CKE,
+
+    // DDRAM (SDRAM for ROM data)
+    output        DDRAM_CLK,
+    output [28:0] DDRAM_ADDR,
+    output [3:0]  DDRAM_BURSTCNT,
+    input         DDRAM_BUSY,
+    input  [63:0] DDRAM_DOUT,
+    output        DDRAM_RD,
+    output [63:0] DDRAM_DIN,
+    output [7:0]  DDRAM_BE,
+    output        DDRAM_WE
 );
 
 // --- HPS IO ---
@@ -86,6 +97,13 @@ PGM pgm_core (
     .ioctl_dout(ioctl_dout),
     .ioctl_index(ioctl_index),
 
+    // Video
+    .renderer_vram_addr(vram_addr),
+    .renderer_vram_dout(vram_dout),
+    .renderer_pal_addr(pal_addr),
+    .renderer_pal_dout(pal_dout),
+    .vregs_dout(vregs),
+
     // Audio
     .sample_l(sample_l),
     .sample_r(sample_r)
@@ -97,9 +115,23 @@ assign AUDIO_S = 1'b0;
 assign AUDIO_MIX = 2'b00;
 
 // --- Video ---
+wire [13:1] vram_addr;
+wire [15:0] vram_dout;
+wire [12:1] pal_addr;
+wire [15:0] pal_dout;
+wire [15:0] vregs [0:31];
+
 pgm_video video_gen (
     .clk(CLK_50M),
     .reset(RESET),
+
+    // Video Data
+    .vram_addr(vram_addr),
+    .vram_dout(vram_dout),
+    .pal_addr(pal_addr),
+    .pal_dout(pal_dout),
+    .vregs(vregs),
+
     .hs(hs),
     .vs(vs),
     .r(r),

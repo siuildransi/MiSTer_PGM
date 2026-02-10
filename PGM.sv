@@ -10,6 +10,13 @@ module PGM (
     input  [15:0] ioctl_dout,
     input  [7:0]  ioctl_index,
 
+    // Video Engine interface
+    input  [13:1] renderer_vram_addr,
+    output [15:0] renderer_vram_dout,
+    input  [12:1] renderer_pal_addr,
+    output [15:0] renderer_pal_dout,
+    output [15:0] vregs_dout [0:31],
+
     // Audio Outputs
     output [15:0] sample_l,
     output [15:0] sample_r
@@ -250,5 +257,16 @@ T80s sound_cpu (
     .RD_n(z_rd_n),
     .WR_n(z_wr_n)
 );
+
+// --- Video Interface Exports ---
+assign renderer_vram_dout = video_ram[renderer_vram_addr];
+assign renderer_pal_dout  = palette_ram[renderer_pal_addr];
+
+genvar i;
+generate
+    for (i=0; i<32; i=i+1) begin : vregs_export
+        assign vregs_dout[i] = video_regs[i];
+    end
+endgenerate
 
 endmodule
