@@ -191,7 +191,7 @@ wire [15:0] spr_dout_vid = {wram_hi[spr_addr_vid[8:1]], wram_lo[spr_addr_vid[8:1
     wire        vid_rd;
     
     // MUX: If downloading, IOCTL controls SDRAM.
-    assign ddram_addr = ioctl_download ? {2'b00, ioctl_addr[28:3]} : vid_addr;
+    assign ddram_addr = ioctl_download ? {5'b0, ioctl_addr[26:3]} : vid_addr;
     assign ddram_we   = ioctl_download && ioctl_wr; 
     assign ddram_rd   = ioctl_download ? 1'b0 : vid_rd;
     
