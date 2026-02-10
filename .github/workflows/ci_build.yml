@@ -12,6 +12,8 @@ jobs:
     env:
       CORE_NAME: PGM
       REPOSITORY: ${{ github.repository }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SKIP_DIFF_CHECK: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
