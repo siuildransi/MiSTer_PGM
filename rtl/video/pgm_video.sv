@@ -163,8 +163,7 @@ always @(posedge clk) begin
                             px_sub_cnt <= px_sub_cnt + 1'd1;
                         end
                         end
-                    end
-                end // Close active_sprites logic
+                    end // Close active_sprites logic
                 
                 // Transition Check (Now outside the active loop)
                 if (curr_sprite_idx == active_sprites_count) begin
