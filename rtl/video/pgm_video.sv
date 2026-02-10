@@ -98,15 +98,41 @@ wire        buf_wr = v_cnt[0];     // Write to current line index
 wire        buf_rd = ~v_cnt[0];    // Read from previous line index
 wire [10:0] cur_fetch_x = line_sprites[curr_sprite_idx].x + {1'b0, px_sub_cnt};
 
-reg [2:0] attr_cnt;
+// --- SDRAM Bus Control (Single Driver Block) ---
+always @(posedge clk) begin
+    if (reset) begin
+        ddram_rd <= 1'b0;
+        ddram_addr <= 0;
+    end else begin
+        // Arbitration between Sprites and Tiles
+        // Priority: Sprites (more critical) > Tiles
+        if (sprite_state == FETCH_SPRITES && active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
+            if (!ddram_busy && !ddram_rd) begin
+                ddram_rd <= 1'b1;
+                ddram_addr <= {5'd0, line_sprites[curr_sprite_idx].code, 3'd0} + px_sub_cnt;
+            end else if (ddram_dout_ready) begin
+                ddram_rd <= 1'b0;
+            end
+        end else if (tile_state == TILE_SDRAM) begin
+            if (!ddram_busy && !ddram_rd) begin
+                ddram_rd <= 1'b1;
+                ddram_addr <= {7'd0, tx_tile_idx[11:0], 5'd0} + {24'd0, tx_tile_line[2:1], 3'd0}; 
+            end else if (ddram_dout_ready) begin
+                ddram_rd <= 1'b0;
+            end
+        end else begin
+            ddram_rd <= 1'b0;
+        end
+    end
+end
+
+// --- Sprite Engine (State Machine only) ---
 always @(posedge clk) begin
     if (reset) begin
         sprite_state <= SCAN_SPRITES;
         curr_sprite_idx <= 0;
         active_sprites_count <= 0;
         attr_cnt <= 0;
-        ddram_rd <= 1'b0;
-        ddram_addr <= 0;
     end else begin
         case (sprite_state)
             SCAN_SPRITES: begin
@@ -132,30 +158,17 @@ always @(posedge clk) begin
             
             FETCH_SPRITES: begin
                 if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
-                    if (!ddram_busy && !ddram_rd) begin
-                        // Request data
-                        ddram_rd <= 1'b1;
-                        ddram_addr <= {5'd0, line_sprites[curr_sprite_idx].code, 3'd0} + px_sub_cnt;
-                    end
-                    
                     if (ddram_dout_ready) begin
-                        // Recibimos los 12 píxeles (4 palabras de 3 píxeles) en 64 bits
-                        ddram_rd <= 1'b0; // Terminar petición actual
-                        
                         case (px_sub_cnt)
-                            // Word 0
                             4'd0:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]};
                             4'd1:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[9:5]};
                             4'd2:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[14:10]};
-                            // Word 1
                             4'd3:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[20:16]};
                             4'd4:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[25:21]};
                             4'd5:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[30:26]};
-                            // Word 2
                             4'd6:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[36:32]};
                             4'd7:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[41:37]};
                             4'd8:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[46:42]};
-                            // Word 3
                             4'd9:  line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[52:48]};
                             4'd10: line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[57:53]};
                             4'd11: line_buffer[buf_wr][cur_fetch_x] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[62:58]};
@@ -164,17 +177,11 @@ always @(posedge clk) begin
                         if (px_sub_cnt == 11) begin
                             px_sub_cnt <= 0;
                             curr_sprite_idx <= curr_sprite_idx + 1'd1;
-                        end else begin
-                            px_sub_cnt <= px_sub_cnt + 1'd1;
-                        end
+                        end else px_sub_cnt <= px_sub_cnt + 1'd1;
                     end
                 end 
                 
-                // Transition Check
-                if (curr_sprite_idx == active_sprites_count) begin
-                    ddram_rd <= 0;
-                    sprite_state <= WAIT_START;
-                end
+                if (curr_sprite_idx == active_sprites_count) sprite_state <= WAIT_START;
             end
 
             WAIT_START: begin
@@ -189,34 +196,7 @@ always @(posedge clk) begin
     end
 end
 
-// --- Video Registers (Unpacked) ---
-wire [15:0] bg_scrolly = vregs[(16+2)*16 +: 16]; // B02000
-wire [15:0] bg_scrollx = vregs[(16+3)*16 +: 16]; // B03000
-wire [15:0] tx_scrolly = vregs[(16+5)*16 +: 16]; // B05000
-wire [15:0] tx_scrollx = vregs[(16+6)*16 +: 16]; // B06000
-
-// --- Coordinate Mapping (448x224 inside 640x480) ---
-wire [9:0] px = h_cnt - 10'd96;
-wire [9:0] py = v_cnt - 10'd128;
-
-// TX Layer Address Logic
-wire [4:0] tx_tile_line = (py + tx_scrolly[7:0]) & 8'h07;
-wire [8:0] tx_vram_row  = ((py + tx_scrolly) >> 3) & 8'h1F;
-
-// Layer Buffers
-reg [9:0] tx_buffer [0:447]; 
-
 // --- Tile Fetcher State Machine (Parallel to Sprites) ---
-localparam TILE_IDLE  = 2'd0;
-localparam TILE_VRAM  = 2'd1;
-localparam TILE_SDRAM = 2'd2;
-
-reg [1:0]  tile_state;
-reg [5:0]  tx_fetch_cnt; 
-reg [15:0] tx_tile_idx;
-reg [15:0] tx_tile_attr;
-reg        tx_attr_phase;
-
 always @(posedge clk) begin
     if (reset) begin
         tile_state <= TILE_IDLE;
@@ -245,18 +225,7 @@ always @(posedge clk) begin
             end
             
             TILE_SDRAM: begin
-                if (!ddram_busy && !ddram_rd && !tx_attr_phase) begin // Only if not fetching VRAM
-                   // Note: Shared ddram_rd with sprites must be handled in PGM.sv
-                end
-                
-                // For now, assume this logic just works because pgm_video is the one driving SDRAM in this core
-                if (!ddram_busy && !ddram_rd) begin
-                    ddram_rd <= 1'b1;
-                    ddram_addr <= {7'd0, tx_tile_idx[11:0], 5'd0} + {24'd0, tx_tile_line[2:1], 3'd0}; 
-                end
-                
                 if (ddram_dout_ready) begin
-                    ddram_rd <= 1'b0;
                     for (int i=0; i<8; i=i+1) begin
                         tx_buffer[tx_fetch_cnt*8 + i] <= {tx_tile_attr[5:1], (tx_tile_line[0] ? 
                             ddram_dout[32 + i*4 +: 4] : ddram_dout[i*4 +: 4])};
