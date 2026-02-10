@@ -30,6 +30,10 @@ module PGM (
     input  [7:0]  ioctl_index
 );
 
+// --- ROM Banking ---
+reg [7:0] rom_bank;
+wire [23:1] bank_adr = {rom_bank[4:0], adr[18:1]}; // 512KB banks
+
 // --- Demon Front Protection (ARM7 HLE) ---
 // 100000 - 1FFFFF: Protection Area
 wire prot_sel = (adr[23:20] == 4'h1) && !as_n;
@@ -38,8 +42,9 @@ reg [15:0] prot_dout;
 always @(*) begin
     prot_dout = 16'hFFFF;
     if (prot_sel) begin
-        // Demon Front often expects specific values or mirror responses
-        // This is a minimal HLE for initial boot
+        // Demon Front protection bypass logic
+        // Based on research, we often need to return specific values 
+        // to pass the ARM check. Returning 0 is a common first attempt.
         prot_dout = 16'h0000; 
     end
 end
@@ -230,16 +235,19 @@ always @(*) begin
 end
 
 // 68k Access to Sound Latches and Z80 RAM Control
-// (Simplified: in a real PGM, 68k can write to sound RAM)
-wire latch_sel = (adr[23:1] == 23'hC00002 >> 1) || 
-                 (adr[23:1] == 23'hC00004 >> 1) || 
-                 (adr[23:1] == 23'hC0000C >> 1);
+// C00008: Z80 Reset (Write 1 to reset, 0 to run)
+// C0000A: Z80 Bank / Control
+wire z80_ctrl_sel = (adr[23:1] == 23'hC0000A >> 1);
 
 always @(posedge fixed_20m_clk) begin
-    if (!as_n && !rw_n && latch_sel) begin
-        if (adr[23:1] == 23'hC00002 >> 1) latch1 <= d_out[7:0];
-        if (adr[23:1] == 23'hC00004 >> 1) latch2 <= d_out[7:0];
-        if (adr[23:1] == 23'hC0000C >> 1) latch3 <= d_out[7:0];
+    if (!as_n && !rw_n) begin
+        if (latch_sel) begin
+            if (adr[23:1] == 23'hC00002 >> 1) latch1 <= d_out[7:0];
+            if (adr[23:1] == 23'hC00004 >> 1) latch2 <= d_out[7:0];
+            if (adr[23:1] == 23'hC0000C >> 1) latch3 <= d_out[7:0];
+        end else if (z80_ctrl_sel) begin
+            rom_bank <= d_out[7:0]; // Example: Bank ROM for 68k or Z80
+        end
     end
 end
 
