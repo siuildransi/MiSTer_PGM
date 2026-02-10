@@ -302,17 +302,9 @@ pgm_video video_inst (
 );
 
 // CPU write access to Video RAMs
-wire pal_sel  = (adr[23:17] == 7'b1010000); // A0xxxx
-wire vram_sel = (adr[23:17] == 7'b1001000); // 90xxxx
-wire vreg_sel = (adr[23:16] == 8'hB0);      // B0xxxx
-
 always @(posedge fixed_20m_clk) begin
     if (!rw_n && !as_n) begin
         if (pal_sel)  pal_ram[adr[11:1]] <= d_out; 
-        // Note: pal_ram is 16-bit, CPU writes 16-bit usually.
-        // If UDS/LDS split needed, we need to split pal_ram like wram.
-        // For skeleton, assuming 16-bit writes for now.
-        
         if (vram_sel) vram[adr[14:1]] <= d_out;
         
         if (vreg_sel) begin
