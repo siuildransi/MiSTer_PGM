@@ -138,23 +138,25 @@ end
 fx68k main_cpu (
     .clk(fixed_20m_clk),
     .extReset(reset),
-    .pwrReset(reset),
+    .pwrUp(reset),
     .enPhi1(1'b1),
     .enPhi2(1'b1),
 
-    .addr(adr),
-    .din(cpu68k_din_reg),
-    .dout(d_out),
-    .as_n(as_n),
-    .uds_n(uds_n),
-    .lds_n(lds_n),
-    .rw_n(rw_n),
-    .dtack_n(cpu68k_dtack_n_reg),
-    .ipl_n(3'b111), // No interrupts for now
-    .vpa_n(1'b1),
-    .br_n(1'b1),
-    .bgack_n(1'b1),
-    .berr_n(1'b1)
+    .eab(adr),
+    .iEdb(cpu68k_din_reg),
+    .oEdb(d_out),
+    .ASn(as_n),
+    .UDSn(uds_n),
+    .LDSn(lds_n),
+    .eRWn(rw_n),
+    .DTACKn(cpu68k_dtack_n_reg),
+    .IPL0n(1'b1),
+    .IPL1n(1'b1),
+    .IPL2n(1'b1),
+    .VPAn(1'b1),
+    .BRn(1'b1),
+    .BGACKn(1'b1),
+    .BERRn(1'b1)
 );
 
 // --- Z80 Sound CPU (T80s) ---
@@ -236,12 +238,12 @@ end
 
 T80s sound_cpu (
     .RESET_n(~reset),
-    .CLK_n(fixed_8m_clk),
+    .CLK(fixed_8m_clk),
     .WAIT_n(1'b1),
     .INT_n(1'b1),
     .NMI_n(1'b1),
     .BUSRQ_n(1'b1),
-    .Addr(z_adr),
+    .A(z_adr),
     .DI(z80_din_reg),
     .DO(z_dout),
     .MREQ_n(z_mreq_n),
