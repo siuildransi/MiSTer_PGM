@@ -1,3 +1,4 @@
+module PGM (
     // Clocks
     input         fixed_20m_clk,
     input         fixed_8m_clk,
