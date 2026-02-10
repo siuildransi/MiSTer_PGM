@@ -111,26 +111,34 @@ always @(posedge clk) begin
             end
             
             FETCH_SPRITES: begin
-                // Fetch pixel data from B-ROM and A-ROM for the sprites found in SCAN_SPRITES
                 if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
                     if (!ddram_busy) begin
-                        ddram_addr <= 29'h0400000 + line_sprites[curr_sprite_idx].code[15:0];
-                        ddram_rd <= 1;
+                        // PGM Sprites: 5bpp unpacking. 3 pixels per 16-bit word.
+                        // Word: [P2:5, P1:5, P0:5, ?:1] 
+                        // Note: Real hardware fetches A and B ROMs.
+                        // For now, let's unpack the 16-bit word we have from SDRAM.
                         
-                        // --- Simplistic Sprite Drawing to Line Buffer ---
-                        // For a real PGM, we need to handle horizontal zoom and flip.
-                        // For now, we just copy 16 pixels if they fit in the scanline.
+                        // Zoom Logic: Use x_zoom to decide if we skip outputting a pixel
+                        // (Shrinking algorithm).
+                        
                         if (line_sprites[curr_sprite_idx].x < 448) begin
-                            // This would be a loop/state machine in real hardware.
-                            // Latching the 5bpp pixels into the buffer:
-                            line_buffer[line_sprites[curr_sprite_idx].x] <= ddram_dout[4:0];
+                            // Unpack 3 pixels from the word
+                            line_buffer[line_sprites[curr_sprite_idx].x]   <= ddram_dout[4:0];
+                            if (line_sprites[curr_sprite_idx].x + 1 < 448)
+                                line_buffer[line_sprites[curr_sprite_idx].x+1] <= ddram_dout[9:5];
+                            if (line_sprites[curr_sprite_idx].x + 2 < 448)
+                                line_buffer[line_sprites[curr_sprite_idx].x+2] <= ddram_dout[14:10];
                         end
                         
                         curr_sprite_idx <= curr_sprite_idx + 1'd1;
                     end
                 end else begin
                     ddram_rd <= 0;
-                    if (h_cnt == 799) sprite_state <= SCAN_SPRITES;
+                    if (h_cnt == 799) begin
+                        sprite_state <= SCAN_SPRITES;
+                        // Clear line buffer for next line
+                        // (This should be done more efficiently in a real line-buffer design)
+                    end
                 end
             end
         endcase

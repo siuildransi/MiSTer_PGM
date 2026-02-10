@@ -19,7 +19,7 @@ jobs:
 
       - name: Build
         run: |
-          # Usamos el script de automatización oficial de MiSTer
+          set -x
           curl -s https://raw.githubusercontent.com/MiSTer-unstable-nightlies/Build-Automation_MiSTer/main/build.sh | bash
 
       - name: Upload RBF
