@@ -1,0 +1,41 @@
+<misterromdescription>
+    <name>Demon Front</name>
+    <mameversion>0245</mameversion>
+    <setname>dmnfrnt</setname>
+    <mratimestamp>20260210000000</mratimestamp>
+    <year>2002</year>
+    <manufacturer>IGS</manufacturer>
+    <category>Run n Gun</category>
+    <rbf>PGM</rbf>
+    
+    <!-- ROM Loading Organization -->
+    <!-- SDRAM Address Map: -->
+    <!-- 0x000000: BIOS (128KB - if present) -->
+    <!-- 0x100000: P-ROM (Main CPU Code) -->
+    <!-- 0x...: A-ROM (Sprite Data) -->
+    
+    <rom index="0" zip="dmnfrnt.zip" md5="None">
+        <!-- Main CPU Program (P-ROM) -->
+        <!-- Loaded at start of SDRAM (offset 0)? -->
+        <!-- Or we need padding if we want it at 0x100000? -->
+        <!-- For now, we load it at 0. Core must remap. -->
+        <!-- Or we prepend BIOS? -->
+        
+        <!-- Part 1: P-ROM 'ige_v105.u20' (size ~?) -->
+        <part name="ige_v105.u20"/>
+        
+        <!-- Part 2: T-ROM (Tilemap) 'ige_t01.u22' -->
+        <part name="ige_t01.u22"/>
+        
+        <!-- Part 3: A-ROM (Sprite Data) 'ige_a01.u11' -->
+        <!-- Part 4: B-ROM (Sprite Attr) 'ige_b01.u8' -->
+        <part name="ige_a01.u11"/>
+        <part name="ige_b01.u8"/>
+        
+        <!-- Part 5: Audio CPU 'ige_m01.u6' -->
+        <part name="ige_m01.u6"/>
+        
+        <!-- Part 6: Samples 'ige_s01.u3' -->
+        <part name="ige_s01.u3"/>
+    </rom>
+</misterromdescription>

@@ -11,9 +11,12 @@
     input  [15:0] ioctl_dout,
     input  [7:0]  ioctl_index,
 
-    // DDRAM Interface (for Sprites)
+    // DDRAM Interface (Shared by Video and Loader)
     output        ddram_rd,
+    output        ddram_we,       // Added
     output [28:0] ddram_addr,
+    output [63:0] ddram_din,      // Added
+    output [7:0]  ddram_be,       // Added
     input  [63:0] ddram_dout,
     input         ddram_busy,
 
@@ -183,6 +186,20 @@ wire [15:0] spr_dout_vid = {wram_hi[spr_addr_vid[8:1]], wram_lo[spr_addr_vid[8:1
 // Current skeleton wram is too small (256 bytes). 
 // Accessing index [8:1] (8 bits) is OK for 256 size.
 
+    // SDRAM Logic (Mux between Video and Loader)
+    wire [28:0] vid_addr;
+    wire        vid_rd;
+    
+    // MUX: If downloading, IOCTL controls SDRAM.
+    assign ddram_addr = ioctl_download ? {2'b00, ioctl_addr[28:3]} : vid_addr;
+    assign ddram_we   = ioctl_download && ioctl_wr; 
+    assign ddram_rd   = ioctl_download ? 1'b0 : vid_rd;
+    
+    assign ddram_din  = {4{ioctl_dout}};
+    assign ddram_be   = (ioctl_addr[2:1] == 2'd0) ? 8'h03 :
+                        (ioctl_addr[2:1] == 2'd1) ? 8'h0C :
+                        (ioctl_addr[2:1] == 2'd2) ? 8'h30 : 8'hC0;
+
 pgm_video video_inst (
     .clk(video_clk),
     .reset(reset),
@@ -198,9 +215,9 @@ pgm_video video_inst (
     .sprite_addr(spr_addr_vid),
     .sprite_dout(spr_dout_vid),
     
-    // SDRAM (Connected to DDRAM in emu.sv)
-    .ddram_rd(ddram_rd),
-    .ddram_addr(ddram_addr),
+    // SDRAM (Connect to internal wires)
+    .ddram_rd(vid_rd),
+    .ddram_addr(vid_addr),
     .ddram_dout(ddram_dout),
     .ddram_busy(ddram_busy),
     

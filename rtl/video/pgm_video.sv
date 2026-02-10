@@ -162,8 +162,12 @@ always @(posedge clk) begin
                         end else begin
                             px_sub_cnt <= px_sub_cnt + 1'd1;
                         end
+                        end
                     end
-                if (curr_sprite_idx == active_sprites_count) begin // All fetched
+                end
+                
+                // Transition Check (Outside the active fetch loop to handle count=0 case)
+                if (curr_sprite_idx == active_sprites_count) begin
                     ddram_rd <= 0;
                     sprite_state <= WAIT_START;
                 end
@@ -202,55 +206,39 @@ always @(posedge clk) begin
 end
 
 // Color Output Mixer
+reg [9:0] sprite_data;
+reg       is_sprite;
+
 always @(posedge clk) begin
     if (!active) begin
         r <= 0; g <= 0; b <= 0;
+        pal_addr <= 0;
+        is_sprite <= 0;
     end else begin
-    int px_idx;
-    assign px_idx = px; 
-
-    // Palette RAM Lookup (1 cycle latency usually, but here we drive addr comb?)
-    // This part is tricky. 'pal_addr' is registered output to core.
-    // 'pal_dout' comes back next cycle.
-    // Pipeline:
-    // Cycle 0: Calculate px. Set pal_addr = line_buffer[px].
-    // Cycle 1: Read pal_dout. Output RGB.
-    
-    // We need to pipeline the mixer.
-    reg [4:0] pixel_val;
-    reg       is_sprite;
-    
-    always @(posedge clk) begin
         // Pipeline Stage 1: Address Setup
-        if (active) begin
-            // Priority: Sprite > BG
-            // Note: line_buffer read is async or sync? Infer M10K -> sync.
-            // But line_buffer is 'reg', so it's logic/registers (or simple RAM).
-            // For 448 pixels, FPGA fits this in regs or MLAB.
-            
-            sprite_data = line_buffer[buf_rd][px];
-            
-            // Clear-on-Read (Clear the pixel we just read for the next frame use)
-            // This avoids the 448-cycle CLEAR_BUFFER state.
-            line_buffer[buf_rd][px] <= 10'd0;
-            
-            if (sprite_data[4:0] != 0) begin
-                pal_addr <= {sprite_data[9:5], sprite_data[4:0]}; // Pal(5) + Color(5)
-                is_sprite <= 1'b1;
-            end else begin
-                // BG Color (Need to implement BG Palette logic too!)
-                // Use Dummy BG for now
-                pal_addr <= {5'd0, 5'd0}; 
-                is_sprite <= 1'b0;
-            end
+        // Priority: Sprite > BG
+        // Note: line_buffer read is async or sync? Infer M10K -> sync.
+        // But line_buffer is 'reg', so it's logic/registers (or simple RAM).
+        // For 448 pixels, FPGA fits this in regs or MLAB.
+        
+        sprite_data = line_buffer[buf_rd][px];
+        
+        // Clear-on-Read (Clear the pixel we just read for the next frame use)
+        // This avoids the 448-cycle CLEAR_BUFFER state.
+        line_buffer[buf_rd][px] <= 10'd0;
+        
+        if (sprite_data[4:0] != 0) begin
+            pal_addr <= {sprite_data[9:5], sprite_data[4:0]}; // Pal(5) + Color(5)
+            is_sprite <= 1'b1;
         end else begin
-            pal_addr <= 0;
-            is_sprite <= 0;
+            // BG Color (Need to implement BG Palette logic too!)
+            // Use Dummy BG for now
+            pal_addr <= {5'd0, 5'd0}; 
+            is_sprite <= 1'b0;
         end
         
         // Pipeline Stage 2: Color Output (from pal_dout)
         // pal_dout is RGB555 (15 bits).
-        // Bit 15 is usually ignored or transparency.
         // PGM Color format: XRRRRRGGGGGBBBBB
         
         if (is_sprite) begin
@@ -259,13 +247,11 @@ always @(posedge clk) begin
             b <= {pal_dout[4:0],   3'b0};
         end else begin
              // BG Placeholder (White for BG, Black for nothing)
-             // r <= 8'h40; g <= 8'h00; b <= 8'h00; // Dark Red Background
              // Actually, use bg_data from tilemap
              r <= bg_data[15:11] << 3;
              g <= bg_data[10:5]  << 2;
              b <= bg_data[4:0]   << 3;
         end
-    end
     end
 end
 
