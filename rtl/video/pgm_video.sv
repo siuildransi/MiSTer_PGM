@@ -69,7 +69,7 @@ end
 
 localparam SCAN_SPRITES  = 2'd0;
 localparam FETCH_SPRITES = 2'd1;
-localparam CLEAR_BUFFER  = 2'd2;
+localparam WAIT_START    = 2'd2;
 
 reg [1:0]  sprite_state;
 reg [9:0]  px_sub_cnt;
@@ -228,7 +228,7 @@ always @(posedge clk) begin
         // But line_buffer is 'reg', so it's logic/registers (or simple RAM).
         // For 448 pixels, FPGA fits this in regs or MLAB.
         
-        sprite_data = line_buffer[buf_rd][px];
+        sprite_data <= line_buffer[buf_rd][px];
         
         // Clear-on-Read (Clear the pixel we just read for the next frame use)
         // This avoids the 448-cycle CLEAR_BUFFER state.
@@ -255,9 +255,9 @@ always @(posedge clk) begin
         end else begin
              // BG Placeholder (White for BG, Black for nothing)
              // Actually, use bg_data from tilemap
-             r <= bg_data[15:11] << 3;
-             g <= bg_data[10:5]  << 2;
-             b <= bg_data[4:0]   << 3;
+             r <= {bg_data[15:11], 3'b0};
+             g <= {bg_data[10:5],  2'b0};
+             b <= {bg_data[4:0],   3'b0};
         end
     end
 end
