@@ -15,7 +15,7 @@ module PGM (
     output [15:0] renderer_vram_dout,
     output [12:1] renderer_pal_addr,
     input  [15:0] renderer_pal_dout,
-    output [15:0] vregs_dout [0:31],
+    output [511:0] vregs_dout,
     output [10:1] sprite_ram_addr,
     input  [15:0] sprite_ram_dout,
 
@@ -268,7 +268,7 @@ assign sprite_ram_dout    = work_ram[sprite_ram_addr];
 genvar i;
 generate
     for (i=0; i<32; i=i+1) begin : vregs_export
-        assign vregs_dout[i] = video_regs[i];
+        assign vregs_dout[16*i +: 16] = video_regs[i];
     end
 endgenerate
 

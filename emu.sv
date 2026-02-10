@@ -121,7 +121,7 @@ wire [13:1] vram_addr;
 wire [15:0] vram_dout;
 wire [12:1] pal_addr;
 wire [15:0] pal_dout;
-wire [15:0] vregs [0:31];
+wire [511:0] vregs;
 wire [10:1] sprite_addr;
 wire [15:0] sprite_dout;
 

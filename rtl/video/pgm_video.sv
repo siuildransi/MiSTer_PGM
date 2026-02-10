@@ -7,7 +7,7 @@ module pgm_video (
     input      [15:0] vram_dout,
     output reg [12:1] pal_addr,
     input      [15:0] pal_dout,
-    input      [15:0] vregs [0:31],
+    input      [511:0] vregs,
     output reg [10:1] sprite_addr,
     input      [15:0] sprite_dout,
 
