@@ -76,6 +76,11 @@ pgm_video video_gen (
 );
 
 // --- sys_top MiSTer Framework ---
+wire ioctl_download, ioctl_wr;
+wire [26:0] ioctl_addr;
+wire [15:0] ioctl_dout;
+wire [7:0]  ioctl_index;
+
 sys_top mister_sys (
     .FPGA_CLK1_50(FPGA_CLK1_50),
     .FPGA_CLK2_50(FPGA_CLK2_50),
@@ -98,14 +103,28 @@ sys_top mister_sys (
     .VGA_B(b[7:2]),
     .VGA_HS(hs),
     .VGA_VS(vs),
-    .VGA_EN(blank_n)
+    .VGA_EN(blank_n),
+
+    // ioctl ROM loading
+    .ioctl_download(ioctl_download),
+    .ioctl_addr(ioctl_addr),
+    .ioctl_dout(ioctl_dout),
+    .ioctl_wr(ioctl_wr),
+    .ioctl_index(ioctl_index)
 );
 
 // --- PGM Core Instance ---
 PGM pgm_core (
     .fixed_20m_clk(clk_20m),
     .fixed_8m_clk(clk_8m),
-    .reset(reset),
+    .reset(reset || ioctl_download), // Reset core during download
+
+    // ioctl
+    .ioctl_download(ioctl_download),
+    .ioctl_wr(ioctl_wr),
+    .ioctl_addr(ioctl_addr),
+    .ioctl_dout(ioctl_dout),
+    .ioctl_index(ioctl_index),
 
     // Placeholder connections
     .cpu68k_din(16'hFFFF),

@@ -20,8 +20,29 @@ module PGM (
     output        cpuz80_mreq_n,
     output        cpuz80_iorq_n,
     output        cpuz80_rd_n,
-    output        cpuz80_wr_n
+    output        cpuz80_wr_n,
+
+    // MiSTer ioctl interface
+    input         ioctl_download,
+    input         ioctl_wr,
+    input  [26:0] ioctl_addr,
+    input  [15:0] ioctl_dout,
+    input  [7:0]  ioctl_index
 );
+
+// --- Demon Front Protection (ARM7 HLE) ---
+// 100000 - 1FFFFF: Protection Area
+wire prot_sel = (adr[23:20] == 4'h1) && !as_n;
+reg [15:0] prot_dout;
+
+always @(*) begin
+    prot_dout = 16'hFFFF;
+    if (prot_sel) begin
+        // Demon Front often expects specific values or mirror responses
+        // This is a minimal HLE for initial boot
+        prot_dout = 16'h0000; 
+    end
+end
 
 // --- 68000 Main CPU (fx68k) ---
 wire [23:1] adr;
@@ -39,11 +60,16 @@ wire bios_sel = (adr[23:17] == 7'b0000000); // 000000-01FFFF
 wire ram_sel  = (adr[23:17] == 7'b1000000); // 800000-81FFFF
 wire vram_sel = (adr[23:17] == 7'b1001000) && (adr[16:15] == 2'b00); // 900000-907FFF (approx)
 
+// --- BIOS ROM (128 KB) ---
+reg [15:0] bios_rom [0:65535];
+wire bios_we = io_download && (ioctl_index == 0) && ioctl_wr;
+
 // --- Work RAM (128 KB) ---
 reg [15:0] work_ram [0:65535];
 wire ram_we = ram_sel && !rw_n && !as_n;
 
 always @(posedge fixed_20m_clk) begin
+    if (bios_we) bios_rom[ioctl_addr[16:1]] <= ioctl_dout;
     if (ram_we) begin
         if (!uds_n) work_ram[adr[16:1]][15:8] <= d_out[15:8];
         if (!lds_n) work_ram[adr[16:1]][7:0]  <= d_out[7:0];
@@ -98,7 +124,7 @@ always @(*) begin
     if (!as_n) begin
         if (bios_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
-            cpu68k_din_reg = 16'h0000;
+            cpu68k_din_reg = bios_rom[adr[16:1]];
         end else if (ram_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
             cpu68k_din_reg = work_ram[adr[16:1]];
@@ -111,6 +137,9 @@ always @(*) begin
         end else if (vreg_sel) begin
             cpu68k_dtack_n_reg = 1'b0;
             cpu68k_din_reg = video_regs[adr[5:1]];
+        end else if (prot_sel) begin
+            cpu68k_dtack_n_reg = 1'b0;
+            cpu68k_din_reg = prot_dout;
         end else begin
             cpu68k_dtack_n_reg = 1'b1; 
         end
