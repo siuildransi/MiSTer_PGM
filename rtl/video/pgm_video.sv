@@ -67,7 +67,26 @@ struct packed {
     logic        flipx;
 } line_sprites [0:31];
 
-reg [9:0] line_buffer [0:1][0:447]; 
+// --- Memory Inference for Line Buffer ---
+// 448x10 = 4480 bits. 2 buffers = 8960 bits total.
+// Using separate arrays to help inference.
+reg [9:0] lb0 [0:511];
+reg [9:0] lb1 [0:511];
+
+// Write ports
+reg lb0_we, lb1_we;
+reg [8:0] lb0_wa, lb1_wa;
+reg [9:0] lb0_wd, lb1_wd;
+
+// Read ports (sequential)
+reg [9:0] lb0_rd, lb1_rd;
+
+always @(posedge clk) begin
+    if (lb0_we) lb0[lb0_wa] <= lb0_wd;
+    lb0_rd <= lb0[px]; // px is synchronous with clk
+    if (lb1_we) lb1[lb1_wa] <= lb1_wd;
+    lb1_rd <= lb1[px];
+end
 
 // Tile Engine Regs
 reg [1:0]  tile_state;
@@ -98,8 +117,8 @@ wire [9:0] py = v_cnt - 10'd128;
 wire       active = (h_cnt >= 96 && h_cnt < 544 && v_cnt >= 128 && v_cnt < 352);
 wire       blank_n_w = active;
 
-wire        buf_wr = v_cnt[0];
-wire        buf_rd = ~v_cnt[0];
+wire        buf_wr_idx = v_cnt[0];
+wire        buf_rd_idx = ~v_cnt[0];
 
 wire [4:0] tx_tile_line = (py + tx_scrolly[7:0]) & 8'h07;
 wire [8:0] tx_vram_row  = ((py + tx_scrolly) >> 3) & 8'h1F;
@@ -151,79 +170,86 @@ always @(posedge clk) begin
     end
 end
 
-// --- Unified Line Buffer & Sprite Engine ---
+// --- Sprite Engine & Buffer Control ---
+reg [8:0] clear_ptr;
+
 always @(posedge clk) begin
     if (reset) begin
         sprite_state <= SCAN_SPRITES;
         curr_sprite_idx <= 0; active_sprites_count <= 0; sprite_attr_cnt <= 0;
         x_accum <= 0; source_x_ptr <= 0; px_sub_cnt <= 0;
-        for(int i=0; i<448; i++) begin line_buffer[0][i] <= 0; line_buffer[1][i] <= 0; end
+        clear_ptr <= 0;
+        lb0_we <= 0; lb1_we <= 0;
     end else begin
-        // Clear logic: move to synchronous clear instead of per-pixel
-        if (h_cnt == 0) begin
-            for(int i=0; i<448; i++) line_buffer[buf_wr][i] <= 0;
-        end
-
-        case (sprite_state)
-            SCAN_SPRITES: begin
-                if (h_cnt >= 640) begin
-                    sprite_addr <= {curr_sprite_idx, 2'b00} + sprite_attr_cnt[1:0];
-                    case (sprite_attr_cnt)
-                        3'd0: temp_sy <= sprite_dout[11:0];
-                        3'd1: temp_sx <= sprite_dout[10:0];
-                        3'd2: begin temp_sh <= sprite_dout[5:0]; temp_flipy <= sprite_dout[7]; temp_flipx <= sprite_dout[6]; end
-                        3'd3: temp_code <= sprite_dout;
-                        3'd4: begin
-                            automatic int zx = (sprite_dout[7:0] == 0)  ? 64 : sprite_dout[7:0];
-                            automatic int zy = (sprite_dout[15:8] == 0) ? 64 : sprite_dout[15:8];
-                            if (v_cnt >= temp_sy) begin
-                                automatic int dy = v_cnt - temp_sy;
-                                automatic int sy_off = (dy * zy) >> 6;
-                                if (sy_off < temp_sh) begin
-                                    if (active_sprites_count < 32) begin
-                                        line_sprites[active_sprites_count].x <= temp_sx;
-                                        line_sprites[active_sprites_count].code <= temp_code;
-                                        line_sprites[active_sprites_count].x_zoom <= zx;
-                                        line_sprites[active_sprites_count].source_y_offset <= sy_off;
-                                        line_sprites[active_sprites_count].pal <= sprite_dout[13:9];
-                                        line_sprites[active_sprites_count].width <= 4;
-                                        line_sprites[active_sprites_count].flipx <= temp_flipx;
-                                        active_sprites_count <= active_sprites_count + 1'd1;
+        // Sequential Clear
+        if (h_cnt < 448) begin
+            if (buf_wr_idx == 0) begin lb0_we <= 1; lb0_wa <= h_cnt[8:0]; lb0_wd <= 0; end
+            else begin lb1_we <= 1; lb1_wa <= h_cnt[8:0]; lb1_wd <= 0; end
+        end else begin
+            lb0_we <= 0; lb1_we <= 0;
+            
+            case (sprite_state)
+                SCAN_SPRITES: begin
+                    if (h_cnt >= 640) begin
+                        sprite_addr <= {curr_sprite_idx, 2'b00} + sprite_attr_cnt[1:0];
+                        case (sprite_attr_cnt)
+                            3'd0: temp_sy <= sprite_dout[11:0];
+                            3'd1: temp_sx <= sprite_dout[10:0];
+                            3'd2: begin temp_sh <= sprite_dout[5:0]; temp_flipy <= sprite_dout[7]; temp_flipx <= sprite_dout[6]; end
+                            3'd3: temp_code <= sprite_dout;
+                            3'd4: begin
+                                automatic int zx = (sprite_dout[7:0] == 0)  ? 64 : sprite_dout[7:0];
+                                automatic int zy = (sprite_dout[15:8] == 0) ? 64 : sprite_dout[15:8];
+                                if (v_cnt >= temp_sy) begin
+                                    automatic int dy = v_cnt - temp_sy;
+                                    automatic int sy_off = (dy * zy) >> 6;
+                                    if (sy_off < temp_sh) begin
+                                        if (active_sprites_count < 32) begin
+                                            line_sprites[active_sprites_count].x <= temp_sx;
+                                            line_sprites[active_sprites_count].code <= temp_code;
+                                            line_sprites[active_sprites_count].x_zoom <= zx;
+                                            line_sprites[active_sprites_count].source_y_offset <= sy_off;
+                                            line_sprites[active_sprites_count].pal <= sprite_dout[13:9];
+                                            line_sprites[active_sprites_count].width <= 4;
+                                            line_sprites[active_sprites_count].flipx <= temp_flipx;
+                                            active_sprites_count <= active_sprites_count + 1'd1;
+                                        end
                                     end
                                 end
                             end
-                        end
-                    endcase
-                    if (sprite_attr_cnt == 4) begin
-                        sprite_attr_cnt <= 0; curr_sprite_idx <= curr_sprite_idx + 1'd1;
-                        if (curr_sprite_idx == 255) sprite_state <= FETCH_SPRITES;
-                    end else sprite_attr_cnt <= sprite_attr_cnt + 1'd1;
-                end
-            end
-            
-            FETCH_SPRITES: begin
-                if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
-                    if (ddram_dout_ready) begin
-                        for (int i=0; i<12; i=i+1) begin
-                            automatic int dx = line_sprites[curr_sprite_idx].x + px_sub_cnt;
-                            if (dx < 448) line_buffer[buf_wr][dx] <= {line_sprites[curr_sprite_idx].pal, ddram_dout[i*5 +: 5]};
-                            px_sub_cnt <= px_sub_cnt + 1'd1;
-                        end
-                        source_x_ptr <= source_x_ptr + 6'd12;
-                        if (source_x_ptr >= 48) begin
-                            source_x_ptr <= 0; px_sub_cnt <= 0; curr_sprite_idx <= curr_sprite_idx + 1'd1;
-                        end
+                        endcase
+                        if (sprite_attr_cnt == 4) begin
+                            sprite_attr_cnt <= 0; curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                            if (curr_sprite_idx == 255) sprite_state <= FETCH_SPRITES;
+                        end else sprite_attr_cnt <= sprite_attr_cnt + 1'd1;
                     end
-                end 
-                if (curr_sprite_idx == active_sprites_count) sprite_state <= WAIT_START;
-            end
-
-            WAIT_START: begin
-                if (h_cnt == 640) begin
-                    sprite_state <= SCAN_SPRITES; curr_sprite_idx <= 0; active_sprites_count <= 0; sprite_attr_cnt <= 0;
                 end
-            end
-        endcase
+                
+                FETCH_SPRITES: begin
+                    if (active_sprites_count > 0 && curr_sprite_idx < active_sprites_count) begin
+                        if (ddram_dout_ready) begin
+                            // Simplified fetch for now to ensure RAM inference
+                            automatic int dx = line_sprites[curr_sprite_idx].x + px_sub_cnt;
+                            if (dx < 448) begin
+                                if (buf_wr_idx == 0) begin lb0_we <= 1; lb0_wa <= dx[8:0]; lb0_wd <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]}; end
+                                else begin lb1_we <= 1; lb1_wa <= dx[8:0]; lb1_wd <= {line_sprites[curr_sprite_idx].pal, ddram_dout[4:0]}; end
+                            end
+                            if (px_sub_cnt == 11) begin
+                                px_sub_cnt <= 0; curr_sprite_idx <= curr_sprite_idx + 1'd1;
+                            end else px_sub_cnt <= px_sub_cnt + 1'd1;
+                        end else begin lb0_we <= 0; lb1_we <= 0; end
+                    end else begin lb0_we <= 0; lb1_we <= 0; end
+                    if (curr_sprite_idx == active_sprites_count) sprite_state <= WAIT_START;
+                end
+
+                WAIT_START: begin
+                    lb0_we <= 0; lb1_we <= 0;
+                    if (h_cnt == 640) begin
+                        sprite_state <= SCAN_SPRITES; curr_sprite_idx <= 0; active_sprites_count <= 0; sprite_attr_cnt <= 0;
+                    end
+                end
+            endcase
+        end
     end
 end
 
@@ -260,12 +286,12 @@ always @(posedge clk) begin
     end
 end
 
-// --- Mixer (Read Only from line_buffer) ---
+// --- Mixer ---
 always @(posedge clk) begin
     if (!blank_n_w) begin
         r <= 0; g <= 0; b <= 0; pal_addr <= 0;
     end else begin
-        automatic logic [9:0] s_data = line_buffer[buf_rd][px];
+        automatic logic [9:0] s_data = (buf_rd_idx == 0) ? lb0_rd : lb1_rd;
         automatic logic [9:0] t_p    = tx_buffer[px];
         automatic logic [4:0] b_p    = bg_buffer[px];
         if (t_p[3:0] != 15) pal_addr <= {5'd1, t_p[4:0]}; 
