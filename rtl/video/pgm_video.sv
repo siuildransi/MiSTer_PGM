@@ -27,23 +27,6 @@ module pgm_video (
     output reg        blank_n
 );
 
-// --- Internal DPRAM Module for guaranteed inference ---
-// Quartus template for Dual Port RAM
-module pgm_dpram #(parameter ADDR_WIDTH=9, parameter DATA_WIDTH=10) (
-    input  clk,
-    input  we,
-    input  [ADDR_WIDTH-1:0] wa,
-    input  [DATA_WIDTH-1:0] wd,
-    input  [ADDR_WIDTH-1:0] ra,
-    output reg [DATA_WIDTH-1:0] rd
-);
-    reg [DATA_WIDTH-1:0] ram [0:(2**ADDR_WIDTH)-1] /* synthesis syn_ramstyle = "no_rw_check, M10K" */;
-    always @(posedge clk) begin
-        if (we) ram[wa] <= wd;
-        rd <= ram[ra];
-    end
-endmodule
-
 // --- Constants ---
 localparam SCAN_SPRITES  = 2'd0;
 localparam FETCH_SPRITES = 2'd1;
@@ -88,20 +71,20 @@ reg  lb0_we, lb1_we;
 reg  [8:0] lb_wa;
 reg  [9:0] lb_wd;
 
-pgm_dpram #(9, 10) lb0_mem (.clk(clk), .we(lb0_we), .wa(lb_wa), .wd(lb_wd), .ra(px[8:0]), .rd(lb0_rd));
-pgm_dpram #(9, 10) lb1_mem (.clk(clk), .we(lb1_we), .wa(lb_wa), .wd(lb_wd), .ra(px[8:0]), .rd(lb1_rd));
+dpram #(9, 10) lb0_mem (.clk(clk), .we(lb0_we), .wa(lb_wa), .wd(lb_wd), .ra(px[8:0]), .rd(lb0_rd));
+dpram #(9, 10) lb1_mem (.clk(clk), .we(lb1_we), .wa(lb_wa), .wd(lb_wd), .ra(px[8:0]), .rd(lb1_rd));
 
 wire [9:0] tx_rd;
 reg  tx_we;
 reg  [8:0] tx_wa;
 reg  [9:0] tx_wd;
-pgm_dpram #(9, 10) tx_mem (.clk(clk), .we(tx_we), .wa(tx_wa), .wd(tx_wd), .ra(px[8:0]), .rd(tx_rd));
+dpram #(9, 10) tx_mem (.clk(clk), .we(tx_we), .wa(tx_wa), .wd(tx_wd), .ra(px[8:0]), .rd(tx_rd));
 
 wire [4:0] bg_rd;
 reg  bg_we;
 reg  [8:0] bg_wa;
 reg  [4:0] bg_wd;
-pgm_dpram #(9, 5) bg_mem (.clk(clk), .we(bg_we), .wa(bg_wa), .wd(bg_wd), .ra(px[8:0]), .rd(bg_rd));
+dpram #(9, 5) bg_mem (.clk(clk), .we(bg_we), .wa(bg_wa), .wd(bg_wd), .ra(px[8:0]), .rd(bg_rd));
 
 // Tile Engine Regs
 reg [1:0]  tile_state;
