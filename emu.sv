@@ -93,6 +93,7 @@ wire [15:0] ioctl_dout;
 wire [7:0]  ioctl_index;
 wire [31:0] status;
 wire [31:0] joy0, joy1;
+wire        ioctl_wait;
 
 hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;")) hps_io (
     .clk_sys(CLK_50M),
@@ -104,6 +105,7 @@ hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;
     .ioctl_addr(ioctl_addr),
     .ioctl_dout(ioctl_dout),
     .ioctl_index(ioctl_index),
+    .ioctl_wait(ioctl_wait),
     .status(status)
 );
 
@@ -168,6 +170,9 @@ PGM pgm_core (
     .ddram_dout(DDRAM_DOUT),
     .ddram_busy(DDRAM_BUSY),
     .ddram_dout_ready(DDRAM_DOUT_READY),
+    
+    // ioctl_wait (core → HPS: pausa transferencia si DDRAM ocupada)
+    .ioctl_wait(ioctl_wait),
     
     // Audio
     .sample_l(sample_l),

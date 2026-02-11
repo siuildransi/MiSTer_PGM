@@ -12,6 +12,7 @@ module PGM (
     input  [26:0] ioctl_addr,
     input  [15:0] ioctl_dout,
     input  [7:0]  ioctl_index,
+    output        ioctl_wait,
 
     // Joysticks and Buttons
     input  [31:0] joystick_0,
@@ -447,6 +448,9 @@ assign ddram_be   = ioctl_download ?
                     ((ioctl_addr[2:1] == 2'd0) ? 8'h03 :
                      (ioctl_addr[2:1] == 2'd1) ? 8'h0C :
                      (ioctl_addr[2:1] == 2'd2) ? 8'h30 : 8'hC0) : 8'hFF;
+
+// Señal de espera: pausa al HPS si DDRAM está ocupada durante la carga
+assign ioctl_wait = ioctl_download & ddram_busy;
 
 // El motor de video recibe los datos directamente del bus principal
 // Sincronizamos ddram_dout_ready para pgm_video? 
