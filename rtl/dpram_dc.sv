@@ -10,9 +10,11 @@ module dpram_dc #(parameter ADDR_WIDTH=16, parameter DATA_WIDTH=8) (
     input  [DATA_WIDTH-1:0]     din_a,
     output reg [DATA_WIDTH-1:0] dout_a,
 
-    // Puerto B (Video - solo lectura)
+    // Puerto B (Z80 / Audio)
     input                       clk_b,
+    input                       we_b,
     input  [ADDR_WIDTH-1:0]     addr_b,
+    input  [DATA_WIDTH-1:0]     din_b,
     output reg [DATA_WIDTH-1:0] dout_b
 );
     reg [DATA_WIDTH-1:0] ram [0:(2**ADDR_WIDTH)-1] /* synthesis syn_ramstyle = "no_rw_check, M10K" */;
@@ -23,8 +25,9 @@ module dpram_dc #(parameter ADDR_WIDTH=16, parameter DATA_WIDTH=8) (
         dout_a <= ram[addr_a];
     end
 
-    // Puerto B (solo lectura)
+    // Puerto B
     always @(posedge clk_b) begin
+        if (we_b) ram[addr_b] <= din_b;
         dout_b <= ram[addr_b];
     end
 endmodule
