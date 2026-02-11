@@ -20,7 +20,7 @@ module ics2115 (
 );
 
 // ICS2115 (Wavetable Synthesizer)
-// 32 Voice Polyphony (Implementing infrastructure)
+// 32 Voice Polyphony (TDM Implementation)
 
 reg [7:0] regs [0:255];
 reg [7:0] cur_reg_addr;
@@ -39,54 +39,93 @@ end
 
 assign dout = (addr == 2'b01) ? regs[cur_reg_addr] : 8'h00;
 
-// Simple Sample Playback FSM (Voice 0 placeholder)
-reg [1:0] state;
-localparam IDLE  = 2'd0;
-localparam FETCH = 2'd1;
-localparam PLAY  = 2'd2;
+// --- 32-Voice TDM Engine ---
+reg [4:0]  voice_cnt;       // 0-31 voices
+reg [1:0]  tdm_state;
+localparam TDM_IDLE   = 2'd0;
+localparam TDM_FETCH  = 2'd1;
+localparam TDM_MIX    = 2'd2;
+localparam TDM_FINISH = 2'd3;
 
-reg [23:0] sample_addr;
-reg [15:0] last_sample_l, last_sample_r;
+// Voice States (Simplified for now)
+reg [23:0] v_addr   [0:31];
+reg [15:0] v_incr   [0:31];
+reg [7:0]  v_vol_l  [0:31];
+reg [7:0]  v_vol_r  [0:31];
+reg [31:0] v_active;        // Bitmask for active voices
 
+// Mixing Accumulators
+reg signed [23:0] mix_l, mix_r;
+reg [15:0] final_l, final_r;
+
+integer v;
 always @(posedge clk) begin
     if (reset) begin
-        state <= IDLE;
+        voice_cnt <= 0;
+        tdm_state <= TDM_IDLE;
+        v_active <= 0;
+        mix_l <= 0;
+        mix_r <= 0;
         sdram_rd <= 0;
-        sample_addr <= 0;
+        for (v=0; v<32; v=v+1) begin
+            v_addr[v] <= 0;
+            v_incr[v] <= 0;
+        end
     end else begin
-        case (state)
-            IDLE: begin
-                // Trig logic placeholder
-                if (regs[8'h40][0]) begin // Assume bit 0 of reg 0x40 is "play"
-                    state <= FETCH;
-                    sample_addr <= {regs[8'h41], regs[8'h42], regs[8'h43]}; // Start Addr
+        case (tdm_state)
+            TDM_IDLE: begin
+                // Comenzar ciclo de mezcla cada vez que voice_cnt vuelve a 0
+                // (En un diseño real esto se sincronizaría con una señal de 33kHz)
+                voice_cnt <= 0;
+                mix_l <= 0;
+                mix_r <= 0;
+                tdm_state <= TDM_FETCH;
+            end
+
+            TDM_FETCH: begin
+                if (v_active[voice_cnt]) begin
+                    sdram_rd <= 1;
+                    sdram_addr <= {5'b0, v_addr[voice_cnt]};
+                    if (sdram_dout_ready) begin
+                        sdram_rd <= 0;
+                        tdm_state <= TDM_MIX;
+                    end
+                end else begin
+                    // Voz inactiva, saltar a la siguiente
+                    if (voice_cnt == 31) tdm_state <= TDM_FINISH;
+                    else voice_cnt <= voice_cnt + 1'd1;
                 end
             end
-            
-            FETCH: begin
-                sdram_rd <= 1;
-                sdram_addr <= {5'b0, sample_addr};
-                if (sdram_dout_ready) begin
-                    sdram_rd <= 0;
-                    last_sample_l <= ddram_dout[15:0];
-                    last_sample_r <= ddram_dout[31:16];
-                    state <= PLAY;
-                end
-            end
-            
-            PLAY: begin
-                // Wait for speaker sync or just loop for now
-                if (!regs[8'h40][0]) state <= IDLE;
+
+            TDM_MIX: begin
+                // Mezcla de canal Izquierdo (16-bit PCM sign-extended)
+                mix_l <= mix_l + $signed(sdram_dout[15:0]);
+                // Mezcla de canal Derecho
+                mix_r <= mix_r + $signed(sdram_dout[31:16]);
+                
+                // Avanzar dirección del puntero
+                v_addr[voice_cnt] <= v_addr[voice_cnt] + 1'd1; 
+                
+                if (voice_cnt == 31) tdm_state <= TDM_FINISH;
                 else begin
-                    sample_addr <= sample_addr + 1'd1;
-                    state <= FETCH;
+                    voice_cnt <= voice_cnt + 1'd1;
+                    tdm_state <= TDM_FETCH;
                 end
+            end
+
+            TDM_FINISH: begin
+                // Aplicar saturación y volumen global (simplificado)
+                final_l <= (mix_l[23]) ? (mix_l < -24'sd32768 ? 16'h8000 : mix_l[15:0]) : 
+                                         (mix_l > 24'sd32767  ? 16'h7FFF : mix_l[15:0]);
+                final_r <= (mix_r[23]) ? (mix_r < -24'sd32768 ? 16'h8000 : mix_r[15:0]) : 
+                                         (mix_r > 24'sd32767  ? 16'h7FFF : mix_r[15:0]);
+                tdm_state <= TDM_IDLE;
             end
         endcase
     end
 end
 
-assign sample_l = last_sample_l;
-assign sample_r = last_sample_r;
+assign sample_l = final_l;
+assign sample_r = final_r;
 
 endmodule
