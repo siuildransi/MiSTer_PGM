@@ -22,6 +22,8 @@
         <!-- BIOS: Mapped to 0x000000 -> 0x0FFFFF -->
         <part name="pgm_p01s.u20" zip="pgm.zip"/>
         <part name="pgm_p02s.u20" zip="pgm.zip"/>
+        <!-- Pad BIOS region to 1MB (256KB used, 768KB padding) -->
+        <part repeat="0xC0000">FF</part>
 
         <!-- P-ROM: Main CPU Program (68000) - 6MB total -->
         <part name="v105_32m.u26"/>

@@ -54,6 +54,8 @@ integer v;
 always @(posedge clk) begin
     if (reset) begin
         voice_cnt <= 0;
+        final_l <= 0;
+        final_r <= 0;
         selected_voice <= 0;
         tdm_state <= TDM_IDLE;
         v_active <= 0;

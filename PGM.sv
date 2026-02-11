@@ -115,8 +115,7 @@ always @(*) begin
             cpu68k_din = {wram_rd_h, wram_rd_l};
         end else if (bios_sel || prom_sel) begin
             sdram_req = 1'b1;
-            // Byte swap for 68k (Big Endian)
-            cpu68k_din = {sdram_data[7:0], sdram_data[15:8]};
+            cpu68k_din = sdram_data;
             if (sdram_ack) cpu68k_dtack_n = 1'b0;
         end else if (vram_sel) begin
             cpu68k_dtack_n = 1'b0;
@@ -381,6 +380,7 @@ reg        vid_ack_50;
 reg        sound_ack_50;
 reg [63:0] sdram_buf;
 reg        ioctl_wr_pending;
+reg        ddram_rd_issued;  // Pulse control: ensure ddram_rd is only 1 cycle
 
 reg sound_rd_last; // Edge detection for audio
 always @(posedge fixed_50m_clk) sound_rd_last <= sound_rd_s2;
@@ -421,18 +421,22 @@ always @(posedge fixed_50m_clk) begin
         arb_state <= ARB_IDLE;
         sdram_ack_50 <= 0;
         vid_ack_50 <= 0;
+        ddram_rd_issued <= 0;
     end else if (ioctl_download) begin
         // Passthrough total para el Loader (latch de escritura está en bloque aparte)
         arb_state <= ARB_IDLE;
+        ddram_rd_issued <= 0;
     end else begin
         case (arb_state)
             ARB_IDLE: begin
-                sdram_ack_50 <= 0;
-                vid_ack_50   <= 0;
-                sound_ack_50 <= 0;
-                if (sdram_req_s2) begin
+                ddram_rd_issued <= 0;
+                // Level-based handshake: only clear ack when request is gone
+                if (!sdram_req_s2) sdram_ack_50 <= 0;
+                if (!vid_rd_s2)    vid_ack_50   <= 0;
+                // Don't start a new transaction while ack is still held
+                if (sdram_req_s2 && !sdram_ack_50) begin
                     arb_state <= ARB_CPU;
-                end else if (vid_rd_s2) begin
+                end else if (vid_rd_s2 && !vid_ack_50) begin
                     arb_state <= ARB_VIDEO;
                 end else if (sound_rd_s2 && !sound_rd_last) begin // Edge detection
                     arb_state <= ARB_AUDIO;
@@ -440,6 +444,7 @@ always @(posedge fixed_50m_clk) begin
             end
             
             ARB_CPU: begin
+                if (!ddram_rd_issued && !ddram_busy) ddram_rd_issued <= 1;
                 if (ddram_dout_ready) begin
                     sdram_buf <= ddram_dout;
                     sdram_ack_50 <= 1;
@@ -448,6 +453,7 @@ always @(posedge fixed_50m_clk) begin
             end
             
             ARB_VIDEO: begin
+                if (!ddram_rd_issued && !ddram_busy) ddram_rd_issued <= 1;
                 if (ddram_dout_ready) begin
                     vid_ack_50 <= 1;
                     arb_state <= ARB_IDLE;
@@ -455,6 +461,7 @@ always @(posedge fixed_50m_clk) begin
             end
 
             ARB_AUDIO: begin
+                if (!ddram_rd_issued && !ddram_busy) ddram_rd_issued <= 1;
                 if (ddram_dout_ready) begin
                     // sound_ack_50 <= 1; // Removed, using sound_ack_hold logic
                     arb_state <= ARB_IDLE;
@@ -494,11 +501,8 @@ assign ddram_addr = ioctl_download ? wr_addr_lat :
 // Write Enable — SOLO durante download con latch activo
 assign ddram_we   = ioctl_wr_pending;
 
-// Read Enable — SOLO fuera de download, cuando el árbitro tiene un slot activo
-assign ddram_rd   = ioctl_download ? 1'b0 : 
-                    (arb_state == ARB_CPU)   ? 1'b1 :
-                    (arb_state == ARB_VIDEO) ? 1'b1 :
-                    (arb_state == ARB_AUDIO) ? 1'b1 : 1'b0;
+// Read Enable — Single pulse: only assert when arbiter has a slot and read not yet issued
+assign ddram_rd   = !ioctl_download && (arb_state != ARB_IDLE) && !ddram_rd_issued && !ddram_busy;
 
 // Data/BE — valores latcheados durante download, defaults para lectura
 assign ddram_din  = wr_data_lat;
