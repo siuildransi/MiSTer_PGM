@@ -301,7 +301,7 @@ ics2115 ics2115_inst (
 wire [15:0] ics2115_l, ics2115_r;
 
 // --- Diagnostic Audio (Beeps) ---
-reg [23:0] beep_cnt;
+reg [25:0] beep_cnt; // Increased for slower heartbeat
 always @(posedge fixed_50m_clk) beep_cnt <= beep_cnt + 1'd1;
 
 // Unconditional heartbeat: always-on ~380Hz tone (proves audio path works)
@@ -329,31 +329,40 @@ assign sample_l = ics2115_l + diag_out;
 assign sample_r = ics2115_r + diag_out;
 
 // --- LED Diagnostics ---
-// Mapeo optimizado para placas de 3 LEDs (Power, Disk, User)
-// Se apagan todos si el sistema está en reset.
+// Remapeo específico según especificación del usuario:
+// LED 1 (Bit 4): Heartbeat (1Hz approx)
+// LED 2 (Bit 1): Bus/Memory Activity (Stretched)
+// LED 3 (Bit 2): Video Sync (VSync)
 assign diagnostic_leds = reset ? 8'h00 : {
     reset,          // Bit 7
     2'b00, 
-    io_active_lat,  // Bit 5: CPU I/O activity (LED User)
-    beep_cnt[23],   // Bit 4: System Heartbeat (LED Power)
+    io_active_lat,  // Bit 5
+    beep_cnt[25],   // Bit 4: Heartbeat (~1Hz toggle)
     z80_nmi_req,    // Bit 3
-    v_vs,           // Bit 2: Video Activity (LED Disk)
-    sd_ack_50_lat,  // Bit 1
+    v_vs,           // Bit 2: V-Sync
+    bus_active_lat, // Bit 1: Bus/Memory Activity
     !as_n           // Bit 0
 };
 
 reg sd_ack_50_lat;
 reg io_active_lat;
+reg bus_active_lat;
 always @(posedge fixed_50m_clk) begin
     if (reset) begin
         sd_ack_50_lat <= 0;
         io_active_lat <= 0;
+        bus_active_lat <= 0;
     end else begin
-        // Stretch SDRAM Ack
+        // Stretch SDRAM Ack (Bit 1 - deprecated but kept)
         if (sdram_ack_50) sd_ack_50_lat <= 1;
         else if (beep_cnt[18]) sd_ack_50_lat <= 0;
         
-        // Stretch I/O selection (Cpu accesses C0xxxx)
+        // Bus/Memory Activity Stretcher (LED 2 / Bit 1)
+        // Usamos as_n (Address Strobe) o sdram_req para detectar actividad de bus
+        if (!as_n || sdram_req_s2) bus_active_lat <= 1;
+        else if (beep_cnt[19]) bus_active_lat <= 0; 
+
+        // Stretch I/O selection (Bit 5)
         if (io_sel) io_active_lat <= 1;
         else if (beep_cnt[20]) io_active_lat <= 0;
     end
