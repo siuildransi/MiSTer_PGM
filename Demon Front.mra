@@ -20,8 +20,8 @@
 
     <rom index="0" zip="dmnfrnt.zip|pgm.zip" md5="None">
         <!-- BIOS: Mapped to 0x000000 -> 0x0FFFFF -->
-        <part name="pgm_v122.u1" zip="pgm.zip"/>
-        <pad size="0x80000"/> <!-- Pad to 1MB (512KB + 512KB) -->
+        <part name="pgm_p01s.u20" zip="pgm.zip"/>
+        <part name="pgm_p02s.u20" zip="pgm.zip"/>
 
         <!-- P-ROM: Main CPU Program (68000) - 6MB total -->
         <part name="v105_32m.u26"/>
@@ -41,5 +41,10 @@
 
         <!-- W-ROM: Audio Samples (ICS2115) - 8MB -->
         <part name="igs_w04501b064.u5"/>
+    </rom>
+
+    <!-- Sound Z80 BIOS/Program -->
+    <rom index="1" zip="pgm.zip">
+        <part name="pgm_m01s.rom"/>
     </rom>
 </misterromdescription>
