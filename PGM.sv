@@ -135,11 +135,9 @@ always @(*) begin
         vram_sel: cpu68k_din = vram_dout_vid; // Simplificado
         pal_sel:  cpu68k_din = pal_dout_vid;  // Simplificado
         io_sel: begin
-            case (adr[15:1])
-                16'h8000 >> 1: cpu68k_din = pgm_inputs;
-                16'h8004 >> 1: cpu68k_din = pgm_system;
-                default:      cpu68k_din = 16'hFFFF;
-            endcase
+            cpu68k_din = 16'hFFFF;
+            if (adr[15:1] == 15'h4000) cpu68k_din = pgm_inputs; // 8000 >> 1
+            if (adr[15:1] == 15'h4002) cpu68k_din = pgm_system; // 8004 >> 1
         end
         default:  cpu68k_din = 16'hFFFF;
     endcase
