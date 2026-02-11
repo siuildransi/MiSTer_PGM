@@ -68,13 +68,13 @@ wire [7:0] wram_vid_h, wram_vid_l;
 dpram_dc #(16, 8) wram_hi_inst (
     .clk_a(fixed_20m_clk), .we_a(wram_we_h), .addr_a(adr[16:1]),
     .din_a(d_out[15:8]),   .dout_a(wram_rd_h),
-    .clk_b(video_clk),    .addr_b({8'd0, spr_addr_vid[8:1]}), .dout_b(wram_vid_h)
+    .clk_b(video_clk),    .we_b(1'b0), .addr_b({8'd0, spr_addr_vid[8:1]}), .din_b(8'h00), .dout_b(wram_vid_h)
 );
 
 dpram_dc #(16, 8) wram_lo_inst (
     .clk_a(fixed_20m_clk), .we_a(wram_we_l), .addr_a(adr[16:1]),
     .din_a(d_out[7:0]),    .dout_a(wram_rd_l),
-    .clk_b(video_clk),    .addr_b({8'd0, spr_addr_vid[8:1]}), .dout_b(wram_vid_l)
+    .clk_b(video_clk),    .we_b(1'b0), .addr_b({8'd0, spr_addr_vid[8:1]}), .din_b(8'h00), .dout_b(wram_vid_l)
 );
 
 // Input Mapping Logic (Active Low)
@@ -271,7 +271,7 @@ wire vram_we = vram_sel && !rw_n && !as_n;
 dpram_dc #(14, 16) vram_inst (
     .clk_a(fixed_20m_clk), .we_a(vram_we), .addr_a(adr[14:1]),
     .din_a(d_out),         .dout_a(),
-    .clk_b(video_clk),    .addr_b(vram_addr_vid), .dout_b(vram_dout_vid)
+    .clk_b(video_clk),    .we_b(1'b0), .addr_b(vram_addr_vid), .din_b(16'h0000), .dout_b(vram_dout_vid)
 );
 
 wire [12:1] pal_addr_vid;
@@ -281,7 +281,7 @@ wire pal_we = pal_sel && !rw_n && !as_n;
 dpram_dc #(11, 16) pal_inst (
     .clk_a(fixed_20m_clk), .we_a(pal_we), .addr_a(adr[11:1]),
     .din_a(d_out),         .dout_a(),
-    .clk_b(video_clk),    .addr_b(pal_addr_vid[11:1]), .dout_b(pal_dout_vid)
+    .clk_b(video_clk),    .we_b(1'b0), .addr_b(pal_addr_vid[11:1]), .din_b(16'h0000), .dout_b(pal_dout_vid)
 );
 
 // Zoom Table / Video Regs (pequeños, se quedan como registros)
