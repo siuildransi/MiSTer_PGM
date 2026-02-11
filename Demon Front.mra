@@ -25,14 +25,15 @@
             <part name="pgm_p01s.u20" zip="pgm.zip"/>
             <part name="pgm_p02s.u20" zip="pgm.zip"/>
         </interleave>
-        <!-- Relleno hasta 1MB (256KB usados, 768KB restantes) -->
-        <part repeat="0xC0000">FF</part>
+        <!-- Relleno hasta 1MB exacto (BIOS son 512KB, faltan 512KB) -->
+        <part repeat="0x80000">FF</part>
 
         <!-- P-ROM: Main CPU Program (68000) - 6MB total -->
         <part name="v105_32m.u26"/>
         <part name="v105_16m.u5"/>
 
-        <!-- T-ROM: Gráficos de Tiles (BIOS + Juego) - 8MB -->
+        <!-- T-ROM: Gráficos de Tiles (BIOS de Tiles + Juego) -->
+        <!-- pgm_t01s.rom son 4MB + igs_t04501... son 8MB = 12MB -->
         <part name="pgm_t01s.rom" zip="pgm.zip"/>
         <part name="igs_t04501w064.u29"/>
 
