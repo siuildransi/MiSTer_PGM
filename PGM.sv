@@ -124,9 +124,20 @@ always @(*) begin
         end else if (io_sel) begin
             cpu68k_dtack_n = 1'b0;
             cpu68k_din = 16'hFFFF;
-            if (adr[15:1] == 15'h4000) cpu68k_din = pgm_inputs; // 8000 >> 1
-            if (adr[15:1] == 15'h4002) cpu68k_din = pgm_system; // 8004 >> 1
+            if (adr[15:1] == 15'h0001) cpu68k_din = {8'h00, sound_latch_1}; // C00002 R (MAME)
+            if (adr[15:1] == 15'h0002) cpu68k_din = {8'h00, sound_latch_2}; // C00004 R
+            if (adr[15:1] == 15'h4000) cpu68k_din = pgm_inputs;            // C08000
+            if (adr[15:1] == 15'h4002) cpu68k_din = pgm_system;            // C08004
         end
+    end
+end
+
+// 68k Write to Latches
+always @(posedge fixed_20m_clk) begin
+    if (reset) begin
+        sound_latch_1 <= 0;
+    end else if (!as_n && !rw_n && io_sel) begin
+        if (adr[15:1] == 15'h0001 && !lds_n) sound_latch_1 <= d_out[7:0]; // C00002
     end
 end
 
@@ -158,26 +169,65 @@ fx68k main_cpu (
 wire [15:0] z_adr;
 wire [7:0]  z_dout;
 wire z_mreq_n, z_iorq_n, z_rd_n, z_wr_n;
+reg  [7:0]  z_din;
 
-// Tiny Z80 RAM (256 bytes)
-(* ramstyle = "no_rw_check" *) reg [7:0] sound_ram [0:255];
-reg [7:0] sram_rd;
+// Sound Latches
+reg [7:0] sound_latch_1; // 68k -> Z80
+reg [7:0] sound_latch_2; // Z80 -> 68k
+reg       z80_nmi;
+
+// Sound RAM (64KB - shared with loader)
+wire [7:0] sram_dout_8m;
+dpram_dc #(16, 8) sound_ram (
+    .clk_a(fixed_50m_clk),
+    .we_a(ioctl_download && ioctl_wr && ioctl_index == 1),
+    .addr_a(ioctl_addr[15:0]),
+    .din_a(ioctl_dout[7:0]),
+    
+    .clk_b(fixed_8m_clk),
+    .we_b(!z_mreq_n && !z_wr_n),
+    .addr_b(z_adr),
+    .din_b(z_dout),
+    .dout_b(sram_dout_8m)
+);
+
+// Z80 I/O Decode
+wire [7:0] ics2115_dout;
+always @(*) begin
+    z_din = 8'hFF;
+    if (!z_mreq_n && !z_rd_n) begin
+        z_din = sram_dout_8m;
+    end else if (!z_iorq_n && !z_rd_n) begin
+        case (z_adr[7:0])
+            8'h00: z_din = sound_latch_1;
+            8'h01: z_din = 8'h00; // IRQ Status?
+            8'h02, 8'h03: z_din = ics2115_dout;
+            default: z_din = 8'hFF;
+        endcase
+    end
+end
 
 always @(posedge fixed_8m_clk) begin
-    if (!z_mreq_n && !z_wr_n)
-        sound_ram[z_adr[7:0]] <= z_dout;
-    sram_rd <= sound_ram[z_adr[7:0]];
+    if (reset) begin
+        sound_latch_2 <= 0;
+        z80_nmi <= 0;
+    end else begin
+        if (!z_iorq_n && !z_wr_n) begin
+            if (z_adr[7:0] == 8'h00) sound_latch_2 <= z_dout;
+        end
+        // NMI logic placeholder (triggered by 68k write to C00002)
+    end
 end
 
 T80s sound_cpu (
     .RESET_n(~reset),
     .CLK(fixed_8m_clk),
     .WAIT_n(1'b1),
-    .INT_n(1'b1),
-    .NMI_n(1'b1),
+    .INT_n(1'b1), // De momento IRQ desactivado
+    .NMI_n(1'b1), // De momento NMI desactivado
     .BUSRQ_n(1'b1),
     .A(z_adr),
-    .DI(sram_rd),
+    .DI(z_din),
     .DO(z_dout),
     .MREQ_n(z_mreq_n),
     .IORQ_n(z_iorq_n),
@@ -185,8 +235,31 @@ T80s sound_cpu (
     .WR_n(z_wr_n)
 );
 
-assign sample_l = 16'h0000;
-assign sample_r = 16'h0000;
+ics2115 ics2115_inst (
+    .clk(fixed_8m_clk), // Ajustar si necesita 33MHz
+    .reset(reset),
+    .addr(z_adr[1:0]),
+    .din(z_dout),
+    .dout(ics2115_dout),
+    .we(!z_iorq_n && !z_wr_n && z_adr[7:2] == 6'b100000), // 0x8000-0x8003
+    .re(!z_iorq_n && !z_rd_n && z_adr[7:2] == 6'b100000),
+    
+    // SDRAM (Samples)
+    .sdram_rd(sound_rd),
+    .sdram_addr(sound_addr),
+    .sdram_dout(ddram_dout),
+    .sdram_busy(ddram_busy || sdram_req || vid_rd), // Audio tiene prioridad baja
+    .sdram_dout_ready(sound_ack),
+
+    .sample_l(sample_l),
+    .sample_r(sample_r)
+);
+
+// Audio SDRAM sync signals
+wire        sound_rd;
+wire [28:0] sound_addr;
+wire        sound_ack;
+wire        sound_ack_20; // Reutilizamos lógica de sync
 
 // --- Video System ---
 
@@ -240,23 +313,33 @@ always @(posedge fixed_50m_clk) {sdram_req_s2, sdram_req_s1} <= {sdram_req_s1, s
 reg  vid_rd_s1, vid_rd_s2;
 always @(posedge fixed_50m_clk) {vid_rd_s2, vid_rd_s1} <= {vid_rd_s1, vid_rd};
 
+// Sync Audio Request to 50MHz
+reg  sound_rd_s1, sound_rd_s2;
+always @(posedge fixed_50m_clk) {sound_rd_s2, sound_rd_s1} <= {sound_rd_s1, sound_rd};
+
 reg [1:0] arb_state;
 localparam ARB_IDLE   = 2'd0;
 localparam ARB_CPU    = 2'd1;
 localparam ARB_VIDEO  = 2'd2;
+localparam ARB_AUDIO  = 2'd3;
 
 reg        sdram_ack_50;
 reg        vid_ack_50;
+reg        sound_ack_50;
 reg [63:0] sdram_buf;
 
 assign sdram_data = (adr[2:1] == 2'd0) ? sdram_buf[15:0]  :
                     (adr[2:1] == 2'd1) ? sdram_buf[31:16] :
                     (adr[2:1] == 2'd2) ? sdram_buf[47:32] : sdram_buf[63:48];
 
-// Sync Ack back to 20MHz
+// Sync Ack back to domains
 reg  sdram_ack_s1, sdram_ack_s2;
 always @(posedge fixed_20m_clk) {sdram_ack_s2, sdram_ack_s1} <= {sdram_ack_s1, sdram_ack_50};
 assign sdram_ack = sdram_ack_s2;
+
+reg  sound_ack_s1, sound_ack_s2;
+always @(posedge fixed_8m_clk) {sound_ack_s2, sound_ack_s1} <= {sound_ack_s1, sound_ack_50};
+assign sound_ack = sound_ack_s2;
 
 always @(posedge fixed_50m_clk) begin
     if (reset) begin
@@ -270,11 +353,14 @@ always @(posedge fixed_50m_clk) begin
         case (arb_state)
             ARB_IDLE: begin
                 sdram_ack_50 <= 0;
-                vid_ack_50 <= 0;
+                vid_ack_50   <= 0;
+                sound_ack_50 <= 0;
                 if (sdram_req_s2) begin
                     arb_state <= ARB_CPU;
                 end else if (vid_rd_s2) begin
                     arb_state <= ARB_VIDEO;
+                end else if (sound_rd_s2) begin
+                    arb_state <= ARB_AUDIO;
                 end
             end
             
@@ -288,8 +374,14 @@ always @(posedge fixed_50m_clk) begin
             
             ARB_VIDEO: begin
                 if (ddram_dout_ready) begin
-                    // Datos para el motor de video van directos por ddram_dout
                     vid_ack_50 <= 1;
+                    arb_state <= ARB_IDLE;
+                end
+            end
+
+            ARB_AUDIO: begin
+                if (ddram_dout_ready) begin
+                    sound_ack_50 <= 1;
                     arb_state <= ARB_IDLE;
                 end
             end
@@ -299,12 +391,14 @@ end
 
 // Physical SDRAM Mux
 assign ddram_addr = ioctl_download ? {5'b0, ioctl_addr[26:3]} :
-                    (arb_state == ARB_CPU) ? {5'b0, adr[23:3]} : vid_addr;
+                    (arb_state == ARB_CPU)   ? {5'b0, adr[23:3]} : 
+                    (arb_state == ARB_AUDIO) ? sound_addr : vid_addr;
                     
-assign ddram_we   = ioctl_download && ioctl_wr; 
+assign ddram_we   = ioctl_download && ioctl_wr && (ioctl_index == 8'h00); 
 assign ddram_rd   = ioctl_download ? 1'b0 : 
-                    (arb_state == ARB_CPU) ? 1'b1 :
-                    (arb_state == ARB_VIDEO) ? 1'b1 : 1'b0;
+                    (arb_state == ARB_CPU)   ? 1'b1 :
+                    (arb_state == ARB_VIDEO) ? 1'b1 :
+                    (arb_state == ARB_AUDIO) ? 1'b1 : 1'b0;
 
 assign ddram_din  = {4{ioctl_dout}};
 assign ddram_be   = ioctl_download ? 

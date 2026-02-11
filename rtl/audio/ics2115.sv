@@ -7,6 +7,13 @@ module ics2115 (
     output [7:0]  dout,
     input         we,
     input         re,
+    
+    // SDRAM Interface (Samples)
+    output reg        sdram_rd,
+    output reg [28:0] sdram_addr,
+    input      [63:0] sdram_dout,
+    input             sdram_busy,
+    input             sdram_dout_ready,
 
     output [15:0] sample_l,
     output [15:0] sample_r
