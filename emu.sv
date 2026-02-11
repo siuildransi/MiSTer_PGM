@@ -92,9 +92,6 @@ wire [26:0] ioctl_addr;
 wire [15:0] ioctl_dout;
 wire [7:0]  ioctl_index;
 wire [31:0] status;
-
-// --- PGM Core (minimal — CPUs only) ---
-wire [15:0] sample_l, sample_r;
 wire [31:0] joy0, joy1;
 
 hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;")) hps_io (
@@ -109,6 +106,41 @@ hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;
     .ioctl_index(ioctl_index),
     .status(status)
 );
+
+// --- Relojes ---
+// PLL genera 25.175MHz (reloj de vídeo) desde 50MHz.
+// CLK_VIDEO debe ser salida de PLL (requisito Quartus para clock switching).
+wire clk_vid;
+wire pll_locked;
+
+pll vid_pll (
+    .refclk(CLK_50M),
+    .rst(1'b0),
+    .outclk_0(clk_vid),
+    .locked(pll_locked)
+);
+
+assign CLK_VIDEO = clk_vid;
+assign CE_PIXEL  = 1'b1;      // Cada ciclo PLL es un píxel
+assign VGA_SL    = 2'b00;     // Sin scanlines
+assign VIDEO_ARX = 13'd4;     // Relación de aspecto 4:3
+assign VIDEO_ARY = 13'd3;
+
+// --- Relojes de CPU ---
+// 68k: ~12.5 MHz (50/4, suficiente para skeleton)
+wire clk_20m;
+reg [1:0] div20;
+always @(posedge CLK_50M) div20 <= div20 + 2'd1;
+assign clk_20m = div20[1];
+
+// Z80: ~6.25 MHz (50/8 ≈ 6.25 MHz, próximo a 8.468MHz del PGM real)
+wire clk_8m;
+reg [2:0] div8;
+always @(posedge CLK_50M) div8 <= div8 + 3'd1;
+assign clk_8m = div8[2];
+
+// --- PGM Core ---
+wire [15:0] sample_l, sample_r;
 
 PGM pgm_core (
     .fixed_20m_clk(clk_20m),
@@ -166,9 +198,6 @@ assign VGA_HS = core_hs;
 assign VGA_VS = core_vs;
 assign VGA_DE = core_blank;
 
-// Placeholder for logic removed
-wire unused_signals = &{1'b0};
-// VGA_DE driven by core_blank above
 assign VGA_F1 = 1'b0;
 assign VGA_SCALER = 2'b00;
 assign VGA_DISABLE = 1'b0;
@@ -189,7 +218,7 @@ assign SDRAM_nCAS = 1'b1;
 assign SDRAM_CLK  = 1'b0;
 assign SDRAM_CKE  = 1'b0;
 
-assign DDRAM_CLK      = 1'b0;
+assign DDRAM_CLK      = CLK_50M;
 // DDRAM_ADDR driven by PGM
 assign DDRAM_BURSTCNT = 4'h0;
 // DDRAM_RD driven by PGM

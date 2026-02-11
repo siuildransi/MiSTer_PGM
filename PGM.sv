@@ -254,8 +254,8 @@ ics2115 ics2115_inst (
     .addr(z_adr[1:0]),
     .din(z_dout),
     .dout(ics2115_dout),
-    .we(!z_iorq_n && !z_wr_n && z_adr[7:2] == 6'b100000), // 0x8000-0x8003
-    .re(!z_iorq_n && !z_rd_n && z_adr[7:2] == 6'b100000),
+    .we(!z_iorq_n && !z_wr_n && (z_adr[7:0] == 8'h02 || z_adr[7:0] == 8'h03)),
+    .re(!z_iorq_n && !z_rd_n && (z_adr[7:0] == 8'h02 || z_adr[7:0] == 8'h03)),
     
     // SDRAM (Samples)
     .sdram_rd(sound_rd),

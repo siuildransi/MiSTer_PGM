@@ -25,17 +25,8 @@ module ics2115 (
 reg [7:0] regs [0:255];
 reg [7:0] cur_reg_addr;
 
-// Register access logic (Indirect)
-always @(posedge clk) begin
-    if (reset) begin
-        cur_reg_addr <= 0;
-    end else if (we) begin
-        case (addr)
-            2'b00: cur_reg_addr <= din;
-            2'b01: regs[cur_reg_addr] <= din;
-        endcase
-    end
-end
+// Nota: La escritura a cur_reg_addr y regs[] se realiza en el bloque TDM principal (abajo)
+// para evitar múltiples drivers sobre las mismas señales.
 
 assign dout = (addr == 2'b01) ? regs[cur_reg_addr] : 8'h00;
 
