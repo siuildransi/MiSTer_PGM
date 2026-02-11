@@ -1,58 +1,80 @@
 # Documentación Técnica: Motor de Video PGM
 
-El motor de video (`rtl/video/pgm_video.sv`) replica el hardware gráfico de IGS, capaz de manejar múltiples capas y sprites con zoom.
+El motor de video (`rtl/video/pgm_video.sv`) es una arquitectura de escaneo de líneas (line-buffer based) diseñada para replicar el hardware de IGS con polifonía de hasta 32 sprites con zoom por línea.
 
-## Especificaciones de Salida
-- **Resolución**: 448 x 224 píxeles (basado en el timing de 25MHz).
-- **Frecuencia Vertical**: ~60Hz.
+## 📺 Especificaciones de Temporización (Timing)
 
-## Motor de Sprites (Sprite Engine)
+| Parámetro | Valor Píxeles | Tiempo (~25.175 MHz) |
+| :--- | :--- | :--- |
+| **H-Active** | 448 | 17.8 µs |
+| **H-Front Porch** | 16 | 0.63 µs |
+| **H-Sync** | 96 | 3.81 µs |
+| **H-Back Porch** | 48 | 1.90 µs |
+| **H-Total** | 608 (límite render) / 800 (VGA) | 31.7 µs |
+| **V-Active** | 224 | 7.1 ms |
+| **V-Total** | 525 | 16.6 ms (60 Hz) |
 
-La PGM destaca por su capacidad de escalar sprites mediante un motor de zoom por hardware.
+> **⚠️ ADVERTENCIA**: El motor de video PGM original usa una resolución de 448x224. En el core MiSTer, el reloj `video_clk` de **25.175 MHz** es el estándar. Si se cambia la frecuencia del reloj, se deben recalcular los contadores `h_cnt` y `v_cnt` para mantener la sincronía.
 
-### 1. Escaneo de Líneas (Line Buffering)
-Para cumplir con los límites de tiempo reales, el motor utiliza dos **Line Buffers** de 10 bits:
-- Mientras un buffer se lee para enviar píxeles a la pantalla, el otro se limpia y rellena con los sprites de la *siguiente* línea.
-- Esto permite renderizar hasta **32 sprites por línea** sin parpadeos.
+## 🏗️ Arquitectura del Pipeline de Renderizado
 
-### 2. Algoritmo de Zoom X/Y
-El escalado se realiza mediante acumuladores de punto fijo:
-- **Zoom vertical (Y)**: Se calcula durante la fase de `SCAN_SPRITES`, determinando qué línea del sprite fuente corresponde a la línea de escaneo actual.
-- **Zoom horizontal (X)**: Implementado en el estado `FETCH_WRITE`. 
-    - Un factor de `64` representa escala 1:1.
-    - Valores menores a 64 amplían el sprite.
-    - Valores mayores a 64 reducen el sprite.
+El motor opera en un ciclo de 1 línea de retardo:
 
-## Gestión del Ancho de Banda y Ráfagas SDRAM
-Un reto clave en el motor de video es la lectura rápida de datos de sprites. Cada píxel es de **5 bits (bpp)**, y los datos se guardan en la SDRAM empaquetados en palabras de 64 bits:
-- **Lectura Optimizada**: Una sola lectura de 64 bits devuelve ~12 píxeles.
-- **Interfacing**: El motor de video solicita datos durante el borrado horizontal (H-Blank) para no interferir con la visualización de la línea actual.
-- **Acceso Directo**: Los datos de la SDRAM fluyen directamente al `sdram_latch` del motor de video sin pasar por la CPU, maximizando el rendimiento.
+1.  **Línea N**: El motor escanea los atributos, lee de SDRAM y escribe los píxeles en el **Line Buffer A**.
+2.  **Línea N+1**: El motor lee el **Line Buffer A** para el Mixer, mientras prepara la línea N+1 en el **Line Buffer B**.
 
-## Composición de Buffers (Line Double Buffering)
-Para evitar el "tearing" y permitir el escalado, el sistema usa dos memorias RAM de línea:
-1. **Fase de Escritura**: El `Sprite Engine` calcula las posiciones X basándose en el zoom y proyecta los píxeles sobre el buffer inactivo.
-2. **Fase de Lectura**: El `Mixer` lee el buffer activo sincrónicamente con el reloj de vídeo para generar la señal VGA.
-Este diseño garantiza una latencia de renderizado de exactamente 1 línea de escaneo.
+### Máquina de Estados de Sprites (`sprite_state`)
 
-## Definición de Registros de Vídeo (vregs)
-Los registros de control de vídeo se pasan al módulo como un bus compacto de 512 bits:
-- `vregs[47:32]`: Scroll Y del fondo (BG).
-- `vregs[63:48]`: Scroll X del fondo (BG).
-- `vregs[79:64]`: Scroll Y de la capa de texto (TX).
-- `vregs[95:80]`: Scroll X de la capa de texto (TX).
-- `vregs[255:0]`: Tabla de Zoom (16 niveles predefinidos).
+| Estado | Función Crítica |
+| :--- | :--- |
+| `SCAN_SPRITES` | Lee la RAM de atributos (128x32 bits). Calcula: `scan_sy_off = ((v_cnt - sy) * zy) >> 6`. |
+| `FETCH_REQ` | Genera `ddram_addr` basándose en el `code` del sprite y el `source_y_offset`. |
+| `FETCH_WAIT` | Espera `ddram_dout_ready`. El latch `sdram_latch` captura 64 bits (12 píxeles). |
+| `FETCH_WRITE` | Realiza el **Zoom X** mediante un acumulador de 8 bits. |
 
-## Capas de Fondo y Texto (Tilemaps)
-- **Capa TX**: Matriz de caracteres de 8x8 píxeles utilizada para la interfaz de usuario.
-- **Capa BG**: Fondo principal del juego con soporte para scroll horizontal y vertical de 32x32 píxeles por tile.
-- Ambas capas acceden a la VRAM para obtener los índices de tiles y a la SDRAM para los datos de los píxeles reales.
+> **⚠️ TRUCO DE IMPLEMENTACIÓN**: El zoom X usa `src_x_accum`. Cuando `src_x_accum >= 64`, avanzamos al siguiente píxel fuente. Esto permite escalas arbitrarias. Si se modifica esta lógica, asegurar que `src_x_whole` no exceda el límite del sprite (48 píxeles).
 
-## Mezclador (Mixer)
-El mezclador final decide qué píxel mostrar basándose en la prioridad y la transparencia:
-1.  **Prioridad 1**: Capa de Texto (si el píxel no es transparente).
-2.  **Prioridad 2**: Sprites.
-3.  **Prioridad 3**: Capa de Fondo.
-4.  **Fallback**: Color de fondo (Backcolor).
+## 🎨 Gestión de Color y Mixer
 
-Se ha corregido la polaridad de la señal `v_blank_n` para asegurar compatibilidad total con el procesador de vídeo de MiSTer.
+### Mezcla de Capas (Orden de Prioridad)
+
+El mixer en la línea 416 de `pgm_video.sv` utiliza un esquema de transparencia por índice:
+
+1.  **Capa TX (Texto)**: Prioridad máxima si el índice de color (bits 3:0) no es `15`.
+2.  **Sprites**: Prioridad media si el índice de color (bits 4:0) no es `0`.
+3.  **Capa BG (Fondo)**: Prioridad baja.
+4.  **Backcolor**: Renderizado si todas las capas anteriores son transparentes.
+
+```verilog
+// Lógica de selección del mixer (pgm_video.sv)
+if (mix_t_p_w[3:0] != 4'd15) pal_addr <= {5'd1, mix_t_p_w[4:0]}; 
+else if (mix_s_data_w[4:0] != 5'd0) pal_addr <= {mix_s_data_w[9:5], mix_s_data_w[4:0]}; 
+else pal_addr <= {5'd2, mix_b_p_w}; 
+```
+
+### Palette RAM (RGB555)
+La paleta se almacena como `dpram_dc`. Cada entrada es de 16 bits:
+- `[14:10]`: Rojo (5 bits)
+- `[9:5]`: Verde (5 bits)
+- `[4:0]`: Azul (5 bits)
+El core expande esto a RGB888 añadiendo `3'b0` al final de cada canal.
+
+## 🧱 Engine de Tiles (Capas TX y BG)
+
+### Diferencias entre Capas
+
+| Característica | Capa TX | Capa BG |
+| :--- | :--- | :--- |
+| Tamaño de Tile | 8x8 | 32x32 |
+| VRAM Base | `0x2000` | `0x0000` |
+| Píxeles por lectura SDRAM | 8 píxeles (4bpp) | 10 píxeles (5bpp) |
+| Scroll | Pixel-exact | Pixel-exact |
+
+> **⚠️ NOTA CRÍTICA SOBRE SDRAM**: Las capas de fondo y sprites comparten el bus SDRAM a través del árbitro en `PGM.sv`. El motor de video tiene prioridad sobre el audio pero **cede** ante la CPU si esta solicita el bus para cargar código. Esto puede provocar "esperas" que el motor de video debe gestionar mediante buffers.
+
+## ⚠️ Evitar Erreores Comunes (Manual de Supervivencia)
+
+1.  **Ancho de Bits**: El acumulador de zoom X debe manejar desbordamientos correctamente. Actualmente usa 8 bits (`src_x_accum`) y 6 bits (`src_x_whole`). Si se amplía el tamaño de los sprites de 48px, se deben ampliar estos registros.
+2.  **Señales Combinacionales**: NO usar asignaciones bloqueantes (`=`) para lógica que dependa de `v_cnt` o `h_cnt` dentro del bloque síncrono. Usar los wires `_w` declarados al principio del módulo.
+3.  **H-Blanking**: El proceso `SCAN_SPRITES` comienza en `h_cnt == 640`. Si se modifica el timing horizontal, asegurar que hay suficiente tiempo para procesar los 256 atributos antes de que comience el área activa de la siguiente línea.
+4.  **Literales**: Siempre usar literales con tamaño explícito (ej: `4'd15` en lugar de `15`) para evitar que el sintetizador asuma 32 bits y consuma lógica innecesaria.
