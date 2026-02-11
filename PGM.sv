@@ -136,10 +136,20 @@ end
 always @(posedge fixed_20m_clk) begin
     if (reset) begin
         sound_latch_1 <= 0;
+        z80_nmi_req <= 0;
     end else if (!as_n && !rw_n && io_sel) begin
-        if (adr[15:1] == 15'h0001 && !lds_n) sound_latch_1 <= d_out[7:0]; // C00002
+        if (adr[15:1] == 15'h0001 && !lds_n) begin
+            sound_latch_1 <= d_out[7:0]; // C00002
+            z80_nmi_req <= 1; // Trigger NMI
+        end
+    end else if (z80_nmi_ack_20) begin
+        z80_nmi_req <= 0;
     end
 end
+
+// Sync NMI Ack from 8MHz to 20MHz
+reg z80_nmi_ack_20;
+always @(posedge fixed_20m_clk) z80_nmi_ack_20 <= z80_nmi_ack_8m;
 
 fx68k main_cpu (
     .clk(fixed_20m_clk),
@@ -171,10 +181,10 @@ wire [7:0]  z_dout;
 wire z_mreq_n, z_iorq_n, z_rd_n, z_wr_n;
 reg  [7:0]  z_din;
 
-// Sound Latches
 reg [7:0] sound_latch_1; // 68k -> Z80
 reg [7:0] sound_latch_2; // Z80 -> 68k
-reg       z80_nmi;
+reg       z80_nmi_req;
+reg       z80_nmi_ack_8m;
 
 // Sound RAM (64KB - shared with loader)
 wire [7:0] sram_dout_8m;
@@ -210,12 +220,15 @@ end
 always @(posedge fixed_8m_clk) begin
     if (reset) begin
         sound_latch_2 <= 0;
-        z80_nmi <= 0;
+        z80_nmi_ack_8m <= 0;
     end else begin
+        z80_nmi_ack_8m <= 0;
         if (!z_iorq_n && !z_wr_n) begin
             if (z_adr[7:0] == 8'h00) sound_latch_2 <= z_dout;
         end
-        // NMI logic placeholder (triggered by 68k write to C00002)
+        if (!z_iorq_n && !z_rd_n) begin
+            if (z_adr[7:0] == 8'h00) z80_nmi_ack_8m <= 1; // Ack NMI on read
+        end
     end
 end
 
@@ -223,8 +236,8 @@ T80s sound_cpu (
     .RESET_n(~reset),
     .CLK(fixed_8m_clk),
     .WAIT_n(1'b1),
-    .INT_n(1'b1), // De momento IRQ desactivado
-    .NMI_n(1'b1), // De momento NMI desactivado
+    .INT_n(1'b1),
+    .NMI_n(~z80_nmi_req), // Active Low
     .BUSRQ_n(1'b1),
     .A(z_adr),
     .DI(z_din),
