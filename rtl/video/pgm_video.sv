@@ -8,7 +8,7 @@ module pgm_video (
     output reg [12:1] pal_addr,
     input      [15:0] pal_dout,
     input      [511:0] vregs,
-    output reg [10:1] sprite_addr,
+    output reg [11:1] sprite_addr, // Dirección de los atributos del sprite (1280 palabras)
     input      [15:0] sprite_dout,
 
     // SDRAM (Graphic Data)
@@ -221,22 +221,20 @@ always @(posedge clk) begin
                 // ============================================================
                 SCAN_SPRITES: begin
                     if (h_cnt >= 640) begin
-                        sprite_addr <= {curr_sprite_idx, 2'b00} + {8'd0, sprite_attr_cnt[1:0]};
+                        // Cada sprite ocupa 5 palabras (10 bytes).
+                        // Dirección = Índice * 5 + desfase de atributo
+                        sprite_addr <= (curr_sprite_idx << 2) + curr_sprite_idx + {8'd0, sprite_attr_cnt};
                         case (sprite_attr_cnt)
                             3'd0: temp_sy <= sprite_dout[11:0];
                             3'd1: temp_sx <= sprite_dout[10:0];
                             3'd2: begin temp_sh <= sprite_dout[5:0]; temp_flipx <= sprite_dout[6]; end
                             3'd3: temp_code <= sprite_dout;
                             3'd4: begin
-                                // Registrar zoom values
+                                // Valores de zoom (64 = 1:1)
                                 temp_zx <= (sprite_dout[7:0] == 0) ? 8'd64 : sprite_dout[7:0];
                                 temp_zy <= (sprite_dout[15:8] == 0) ? 8'd64 : sprite_dout[15:8];
-                            end
-                            3'd5: begin
-                                // Calcular si el sprite es visible en esta línea
-                                // dy = v_cnt - sprite_y
-                                // source_y = (dy * zy) >> 6
-                                // Si source_y < height → visible
+                                
+                                // Determinar si el sprite es visible en esta línea
                                 if (v_cnt >= {1'b0, temp_sy[8:0]}) begin
                                     if (scan_sy_off_w < {6'd0, temp_sh}) begin
                                         if (active_sprites_count < 32) begin
@@ -244,7 +242,7 @@ always @(posedge clk) begin
                                             line_sprites[active_sprites_count].code <= temp_code;
                                             line_sprites[active_sprites_count].x_zoom <= temp_zx;
                                             line_sprites[active_sprites_count].source_y_offset <= scan_sy_off_w;
-                                            line_sprites[active_sprites_count].pal <= sprite_dout[13:9];
+                                            line_sprites[active_sprites_count].pal <= sprite_dout[13:9]; // Paleta guardada en palabra 4
                                             line_sprites[active_sprites_count].flipx <= temp_flipx;
                                             line_sprites[active_sprites_count].width <= temp_sh;
                                             active_sprites_count <= active_sprites_count + 1'd1;
@@ -259,17 +257,18 @@ always @(posedge clk) begin
                                     sdram_word_idx <= 0;
                                     src_x_accum <= 0;
                                     dst_x_pos <= 0;
+                                    src_x_whole <= 0;
                                     fetch_need_data <= 1;
                                 end
                             end
                         endcase
-                        if (sprite_attr_cnt < 5)
+                        if (sprite_attr_cnt < 4)
                             sprite_attr_cnt <= sprite_attr_cnt + 1'd1;
                     end
                 end
 
                 // ============================================================
-                // FETCH_REQ: Solicita datos SDRAM para el sprite actual
+                // FETCH_REQ: Solicita datos de la SDRAM para el sprite actual
                 // ============================================================
                 FETCH_REQ: begin
                     lb0_we <= 0; lb1_we <= 0;

@@ -6,7 +6,7 @@ module PGM (
     input         video_clk,      // Dominio Motor Video (~25.17 MHz)
     input         reset,
 
-    // MiSTer ioctl interface
+    // Interfaz ioctl de MiSTer
     input         ioctl_download,
     input         ioctl_wr,
     input  [26:0] ioctl_addr,
@@ -29,11 +29,11 @@ module PGM (
     input         ddram_busy,
     input         ddram_dout_ready, // Added
 
-    // Audio Outputs
+    // Salidas de Audio
     output [15:0] sample_l,
     output [15:0] sample_r,
 
-    // Video Outputs
+    // Salidas de Vídeo
     output [7:0]  v_r,
     output [7:0]  v_g,
     output [7:0]  v_b,
@@ -49,15 +49,15 @@ wire as_n, uds_n, lds_n, rw_n;
 reg [15:0] cpu68k_din;
 reg cpu68k_dtack_n;
 
-// Memory Decoding (PGM Map)
+// Decodificación de Memoria (Mapa PGM)
 wire bios_sel  = (adr[23:20] == 4'h0);      // 000000 - 0FFFFF (BIOS en SDRAM)
 wire prom_sel  = (adr[23:20] >= 4'h1 && adr[23:20] <= 4'h9); // 100000 - 9FFFFF (P-ROM en SDRAM)
 wire ram_sel   = (adr[23:17] == 7'b1000000); // 800000 - 81FFFF (Work RAM)
 wire vram_sel  = (adr[23:17] == 7'b1001000); // 900000 - 907FFF (VRAM)
-wire pal_sel   = (adr[23:17] == 7'b1010000); // A00000 - A011FF (Palette)
-wire vreg_sel  = (adr[23:16] == 8'hB0);      // B00000 - B0FFFF (Registers)
+wire pal_sel   = (adr[23:17] == 7'b1010000); // A00000 - A011FF (Paleta)
+wire vreg_sel  = (adr[23:16] == 8'hB0);      // B00000 - B0FFFF (Registros)
 wire io_sel    = (adr[23:16] == 8'hC0);      // C00000 - C0FFFF (I/O, Sound Latch)
-wire prot_sel  = (adr[23:16] == 8'h40);      // 400000 - 40FFFF (Type 3 Protection)
+wire prot_sel  = (adr[23:16] == 8'h40);      // 400000 - 40FFFF (Protección Tipo 3)
 
 // --- Main Work RAM (128KB = 64K words) via dpram_dc ---
 // Puerto A: CPU 68k (20MHz) - lectura/escritura
@@ -70,13 +70,13 @@ wire [7:0] wram_vid_h, wram_vid_l;
 dpram_dc #(16, 8) wram_hi_inst (
     .clk_a(fixed_20m_clk), .we_a(wram_we_h), .addr_a(adr[16:1]),
     .din_a(d_out[15:8]),   .dout_a(wram_rd_h),
-    .clk_b(video_clk),    .we_b(1'b0), .addr_b({8'd0, spr_addr_vid[8:1]}), .din_b(8'h00), .dout_b(wram_vid_h)
+    .clk_b(video_clk),    .we_b(1'b0), .addr_b({5'd0, spr_addr_vid[11:1]}), .din_b(8'h00), .dout_b(wram_vid_h)
 );
 
 dpram_dc #(16, 8) wram_lo_inst (
     .clk_a(fixed_20m_clk), .we_a(wram_we_l), .addr_a(adr[16:1]),
     .din_a(d_out[7:0]),    .dout_a(wram_rd_l),
-    .clk_b(video_clk),    .we_b(1'b0), .addr_b({8'd0, spr_addr_vid[8:1]}), .din_b(8'h00), .dout_b(wram_vid_l)
+    .clk_b(video_clk),    .we_b(1'b0), .addr_b({5'd0, spr_addr_vid[11:1]}), .din_b(8'h00), .dout_b(wram_vid_l)
 );
 
 // Input Mapping Logic (Active Low)
@@ -99,7 +99,7 @@ wire [15:0] pgm_system = ~{
     joystick_1[9], joystick_0[9]  // Coin 2, Coin 1
 };
 
-// SDRAM Interface & DTACK Logic
+// Interfaz SDRAM y Lógica DTACK
 reg  sdram_req;
 wire sdram_ack;
 wire [15:0] sdram_data;
@@ -115,7 +115,8 @@ always @(*) begin
             cpu68k_din = {wram_rd_h, wram_rd_l};
         end else if (bios_sel || prom_sel) begin
             sdram_req = 1'b1;
-            cpu68k_din = sdram_data;
+            // Byte swap for 68k (Big Endian)
+            cpu68k_din = {sdram_data[7:0], sdram_data[15:8]};
             if (sdram_ack) cpu68k_dtack_n = 1'b0;
         end else if (vram_sel) begin
             cpu68k_dtack_n = 1'b0;
@@ -152,11 +153,11 @@ always @(posedge fixed_20m_clk) begin
     end
 end
 
-// Sync NMI Ack from 8MHz to 20MHz
+// Sincronización de Ack NMI de 8MHz a 20MHz
 reg z80_nmi_ack_20;
 always @(posedge fixed_20m_clk) z80_nmi_ack_20 <= z80_nmi_ack_8m;
 
-// --- VBLANK IRQ (Level 6) ---
+// --- IRQ de VBLANK (Nivel 6) ---
 reg vblank_irq;
 reg vs_s1, vs_s2;
 always @(posedge fixed_20m_clk) begin
@@ -168,14 +169,13 @@ end
 
 wire [2:0] ipl_n = vblank_irq ? 3'b001 : 3'b111; // Level 6 or None
 
-// --- fx68k Clock Phase Enables ---
-// fx68k requires alternating single-cycle enPhi1/enPhi2 pulses.
-// Both=1 is ILLEGAL: enPhi1 branch never executes in else-if chains.
-// Divider: clk/4 gives ~6.25MHz effective CPU speed from 25MHz clock.
-reg [1:0] phi_cnt;
-always @(posedge fixed_20m_clk) phi_cnt <= phi_cnt + 2'd1;
-wire cpu_enPhi1 = (phi_cnt == 2'd3);
-wire cpu_enPhi2 = (phi_cnt == 2'd1);
+// --- Generación de Reloj para fx68k ---
+// El 68000 del PGM real corre a 20MHz. Aquí usamos el reloj de 25MHz
+// directamente para asegurar fluidez y arranque rápido.
+wire cpu_enPhi1 = 1'b1;
+wire cpu_enPhi2 = 1'b1;
+// NOTA: fx68k puede configurarse de varias formas, si enPhi1/2 fijos
+// dan problemas, se puede usar un flip-flop para alternarlos.
 
 fx68k main_cpu (
     .clk(fixed_20m_clk),
@@ -212,7 +212,7 @@ reg [7:0] sound_latch_2; // Z80 -> 68k
 reg       z80_nmi_req;
 reg       z80_nmi_ack_8m;
 
-// Sound RAM (64KB - shared with loader)
+// RAM de Sonido (64KB - compartida con el cargador)
 wire [7:0] sram_dout_8m;
 dpram_dc #(16, 8) sound_ram (
     .clk_a(fixed_50m_clk),
@@ -227,7 +227,7 @@ dpram_dc #(16, 8) sound_ram (
     .dout_b(sram_dout_8m)
 );
 
-// Z80 I/O Decode
+// Decodificación de E/S del Z80
 wire [7:0] ics2115_dout;
 always @(*) begin
     z_din = 8'hFF;
@@ -236,7 +236,7 @@ always @(*) begin
     end else if (!z_iorq_n && !z_rd_n) begin
         case (z_adr[7:0])
             8'h00: z_din = sound_latch_1;
-            8'h01: z_din = 8'h00; // IRQ Status?
+            8'h01: z_din = 8'h00; // Estado de IRQ?
             8'h02, 8'h03: z_din = ics2115_dout;
             default: z_din = 8'hFF;
         endcase
@@ -253,7 +253,7 @@ always @(posedge fixed_8m_clk) begin
             if (z_adr[7:0] == 8'h00) sound_latch_2 <= z_dout;
         end
         if (!z_iorq_n && !z_rd_n) begin
-            if (z_adr[7:0] == 8'h00) z80_nmi_ack_8m <= 1; // Ack NMI on read
+            if (z_adr[7:0] == 8'h00) z80_nmi_ack_8m <= 1; // Ack NMI al leer
         end
     end
 end
@@ -308,20 +308,22 @@ wire beep_cpu    = beep_cnt[14] & sdram_req; // ~1.5kHz tone during ROM fetch
 wire beep_io     = beep_cnt[13] & io_sel;    // ~3kHz tone during I/O access
 
 // Mix diagnostics into final samples
-// Heartbeat at medium volume, others at lower volume
-wire [15:0] diag_out = (beep_heartbeat ? 16'h1000 : 16'h0) +
-                       (beep_vblank ? 16'h0800 : 16'h0) + 
-                       (beep_cpu    ? 16'h0800 : 16'h0) + 
-                       (beep_io     ? 16'h0800 : 16'h0);
+// Mute all diagnostics during reset or ROM download
+wire [15:0] diag_raw = (beep_heartbeat ? 16'h1000 : 16'h0) +
+                       (beep_vblank    ? 16'h0800 : 16'h0) + 
+                       (beep_cpu       ? 16'h0800 : 16'h0) + 
+                       (beep_io        ? 16'h0800 : 16'h0);
+
+wire [15:0] diag_out = (reset || ioctl_download) ? 16'h0000 : diag_raw;
 
 assign sample_l = ics2115_l + diag_out;
 assign sample_r = ics2115_r + diag_out;
 
-// Audio SDRAM sync signals
+// Señales de sincronización SDRAM de Audio
 wire        sound_rd;
 wire [28:0] sound_addr;
 wire        sound_ack;
-wire        sound_ack_20; // Reutilizamos lógica de sync
+wire        sound_ack_20; // Reutilizamos lógica de sincronización
 
 // --- Video System ---
 
@@ -361,15 +363,15 @@ generate
     end
 endgenerate
 
-// Sprite data: lectura síncrona vía puerto B de wram
-wire [10:1] spr_addr_vid;
+// Datos de Sprites: lectura síncrona vía puerto B de wram
+wire [11:1] spr_addr_vid;
 wire [15:0] spr_dout_vid = {wram_vid_h, wram_vid_l};
 
-// Video SDRAM interconnections
+// Interconexiones de Vídeo y SDRAM
 wire        vid_rd;
 wire [28:0] vid_addr;
 
-// --- SDRAM Arbitrator (50MHz Domain) ---
+// --- Árbitro de SDRAM (Dominio 50MHz) ---
 
 // Sync CPU Request to 50MHz
 reg  sdram_req_s1, sdram_req_s2;

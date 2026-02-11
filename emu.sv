@@ -144,7 +144,7 @@ always @(posedge CLK_50M) begin
 end
 assign clk_8m = (div6 < 3);
 
-// --- PGM Core ---
+// --- Núcleo PGM ---
 wire [15:0] sample_l, sample_r;
 
 PGM pgm_core (
@@ -159,12 +159,12 @@ PGM pgm_core (
     .ioctl_dout(ioctl_dout),
     .ioctl_index(ioctl_index),
     
-    // Joystick/Buttons
+    // Joystick/Botones
     .joystick_0(joy0),
     .joystick_1(joy1),
     .joy_buttons(status[15:0]),
     
-    // DDRAM Interface
+    // Interfaz DDRAM
     .ddram_rd(DDRAM_RD),
     .ddram_we(DDRAM_WE),
     .ddram_addr(DDRAM_ADDR),
@@ -174,14 +174,14 @@ PGM pgm_core (
     .ddram_busy(DDRAM_BUSY),
     .ddram_dout_ready(DDRAM_DOUT_READY),
     
-    // ioctl_wait (core → HPS: pausa transferencia si DDRAM ocupada)
+    // ioctl_wait (núcleo → HPS: pausa transferencia si DDRAM está ocupada)
     .ioctl_wait(ioctl_wait),
     
     // Audio
     .sample_l(sample_l),
     .sample_r(sample_r),
     
-    // Video
+    // Vídeo
     .v_r(core_r),
     .v_g(core_g),
     .v_b(core_b),
@@ -195,7 +195,7 @@ assign AUDIO_R = sample_r;
 assign AUDIO_S = 1'b0;
 assign AUDIO_MIX = 2'b00;
 
-// --- Video Routing ---
+// --- Enrutamiento de Vídeo ---
 wire [7:0] core_r, core_g, core_b;
 wire core_hs, core_vs, core_blank;
 
@@ -210,7 +210,7 @@ assign VGA_F1 = 1'b0;
 assign VGA_SCALER = 2'b00;
 assign VGA_DISABLE = 1'b0;
 
-// --- Defaults ---
+// --- Valores por Defecto ---
 assign LED_USER  = 8'h00;
 assign LED_POWER = 8'h01;
 assign LED_DISK  = 8'h00;
@@ -227,12 +227,12 @@ assign SDRAM_CLK  = 1'b0;
 assign SDRAM_CKE  = 1'b0;
 
 assign DDRAM_CLK      = CLK_50M;
-// DDRAM_ADDR driven by PGM
+// DDRAM_ADDR manejado por PGM
 assign DDRAM_BURSTCNT = 4'h1;  // 1 burst = 64 bits (CRÍTICO: 0 = sin lectura)
-// DDRAM_RD driven by PGM
-// DDRAM_DIN driven by PGM
-// DDRAM_BE driven by PGM
-// DDRAM_WE driven by PGM
+// DDRAM_RD manejado por PGM
+// DDRAM_DIN manejado por PGM
+// DDRAM_BE manejado por PGM
+// DDRAM_WE manejado por PGM
 
 assign SD_SCK  = 1'b0;
 assign SD_MOSI = 1'b0;
