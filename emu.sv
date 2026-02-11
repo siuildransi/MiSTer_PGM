@@ -220,7 +220,7 @@ assign SDRAM_CKE  = 1'b0;
 
 assign DDRAM_CLK      = CLK_50M;
 // DDRAM_ADDR driven by PGM
-assign DDRAM_BURSTCNT = 4'h0;
+assign DDRAM_BURSTCNT = 4'h1;  // 1 burst = 64 bits (CRÍTICO: 0 = sin lectura)
 // DDRAM_RD driven by PGM
 // DDRAM_DIN driven by PGM
 // DDRAM_BE driven by PGM

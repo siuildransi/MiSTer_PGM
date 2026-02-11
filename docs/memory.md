@@ -15,8 +15,9 @@ La CPU principal (68k) direcciona un espacio de 24 bits. La decodificación se r
 | `0xA00000 - 0xA011FF` | `pal_sel` | `adr[23:17] == 7'b1010000` | Palette RAM |
 | `0xB00000 - 0xB0FFFF` | `vreg_sel` | `adr[23:16] == 8'hB0` | Video Registers |
 | `0xC00000 - 0xC0FFFF` | `io_sel` | `adr[23:16] == 8'hC0` | I/O & Sound |
+| `0x400000 - 0x40FFFF` | `prot_sel` | `adr[23:16] == 8'h40` | Protection (IGS027A HLE) |
 
-> **⚠️ IMPORTANTE**: Las señales `_sel` se evalúan en un bloque **combinacional** (`always @(*)`). Cambiar la lógica de prioridad del `if-else if` puede alterar el comportamiento del bus. El orden actual es: `ram_sel` → `bios_sel/prom_sel` → `vram_sel` → `pal_sel` → `io_sel`.
+> **⚠️ IMPORTANTE**: Las señales `_sel` se evalúan en un bloque **combinacional** (`always @(*)`). Cambiar la lógica de prioridad del `if-else if` puede alterar el comportamiento del bus. El orden actual es: `ram_sel` → `bios_sel/prom_sel` → `vram_sel` → `pal_sel` → `io_sel` → `prot_sel`.
 
 ### Detalle del Espacio I/O (`0xC00000`)
 

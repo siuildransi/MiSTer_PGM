@@ -29,7 +29,8 @@ Núcleo para la placa arcade **PolyGame Master (PGM)** de IGS, implementado para
 | CPU de sonido | `T80s` (Z80) | ~6.25 MHz (CLK_50M/8) | ✅ Funcional |
 | Sintetizador | `ics2115.sv` | clk_8m | ✅ 32 voces TDM |
 | Motor de video | `pgm_video.sv` | clk_vid (~25.175 MHz) | ✅ Sprites + TX + BG |
-| Árbitro SDRAM | en `PGM.sv` | CLK_50M | ✅ CPU > Video > Audio |
+| Árbitro SDRAM | en `PGM.sv` | CLK_50M | ✅ 3 canales (CPU/Vid/Aud) |
+| Protección | `igs027a_hle.sv` | fixed_20m_clk | ⚠️ ARM7 HLE (Type 3) |
 | RAM de trabajo | `dpram_dc.sv` × 2 | 20MHz / video_clk | ✅ True Dual-Port |
 
 > **⚠️ NOTA SOBRE RELOJES**: Los relojes de CPU son divisores simples de 50MHz, no frecuencias exactas del hardware PGM original (20MHz y 8.468MHz). Para una implementación ciclo-exacta futura, se necesitaría un PLL adicional con estas frecuencias.
@@ -89,6 +90,7 @@ El core utiliza carga segmentada controlada por `ioctl_index`:
 | `CLK_VIDEO` en `emu.sv` | **DEBE ser salida de PLL** (requisito Quartus para clock switching) |
 | Puertos I/O del ICS2115 | Son **`0x02`/`0x03`** del Z80, NO `0x80`. Ver `PGM.sv` líneas 257-258 |
 | `sound_ack_hold` en `PGM.sv` | Handshake CDC crítico (50MHz→8MHz). No simplificar a pulso simple |
+| Protección `0x400000` | Espacio HLE crítico para Demon Front. No remapear sin actualizar `igs027a_hle.sv` |
 | `dpram_dc` puertos A/B | Puerto A = loader/CPU (50MHz/20MHz), Puerto B = Z80/video. No intercambiar |
 
 ### Errores Comunes Ya Resueltos
