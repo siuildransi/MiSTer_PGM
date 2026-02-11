@@ -187,8 +187,14 @@ PGM pgm_core (
     .v_b(core_b),
     .v_hs(core_hs),
     .v_vs(core_vs),
-    .v_blank_n(core_blank)
+    .v_blank_n(core_blank),
+
+    // Diagnósticos
+    .diagnostic_leds(led_diag)
 );
+
+wire [7:0] led_diag;
+assign LED_USER = led_diag;
 
 assign AUDIO_L = sample_l;
 assign AUDIO_R = sample_r;

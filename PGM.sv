@@ -39,7 +39,8 @@ module PGM (
     output [7:0]  v_b,
     output        v_hs,
     output        v_vs,
-    output        v_blank_n
+    output        v_blank_n,
+    output [7:0]  diagnostic_leds
 );
 
 // --- 68000 Main CPU (fx68k) ---
@@ -314,15 +315,34 @@ wire beep_io     = beep_cnt[13] & io_sel;    // ~3kHz tone during I/O access
 // Mezclar diagnósticos en las muestras finales
 // Solo silenciar durante la descarga de la ROM (ioctl_download)
 // Mantenemos el pitido durante el reset para confirmar que el audio funciona
+wire beep_z80 = beep_cnt[12] & z80_nmi_req & beep_cnt[22]; // ~6kHz tone modulated at ~6Hz (Chirp)
+
 wire [15:0] diag_raw = (beep_heartbeat ? 16'h1000 : 16'h0) +
                        (beep_vblank    ? 16'h0800 : 16'h0) + 
                        (beep_cpu       ? 16'h0800 : 16'h0) + 
-                       (beep_io        ? 16'h0800 : 16'h0);
+                       (beep_io        ? 16'h0800 : 16'h0) +
+                       (beep_z80       ? 16'h0800 : 16'h0);
 
 wire [15:0] diag_out = ioctl_download ? 16'h0000 : diag_raw;
 
 assign sample_l = ics2115_l + diag_out;
 assign sample_r = ics2115_r + diag_out;
+
+// --- LED Diagnostics ---
+assign diagnostic_leds = {
+    reset,          // Bit 7: Reset status
+    3'b000,         // Unused
+    z80_nmi_req,    // Bit 3: Z80 NMI activity
+    v_vs,           // Bit 2: VSync activity
+    sd_ack_50_lat,  // Bit 1: SDRAM Ack (approximation)
+    !as_n           // Bit 0: CPU Address Strobe (active low)
+};
+
+reg sd_ack_50_lat;
+always @(posedge fixed_50m_clk) begin
+    if (sdram_ack_50) sd_ack_50_lat <= 1;
+    else if (beep_cnt[18]) sd_ack_50_lat <= 0; // Stretch pulse for visibility
+end
 
 // Señales de sincronización SDRAM de Audio
 wire        sound_rd;
