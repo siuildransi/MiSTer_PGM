@@ -251,7 +251,7 @@ T80s sound_cpu (
 ics2115 ics2115_inst (
     .clk(fixed_8m_clk), // Ajustar si necesita 33MHz
     .reset(reset),
-    .addr(z_adr[1:0]),
+    .addr({1'b0, z_adr[0]}), // 0x02 -> 0, 0x03 -> 1
     .din(z_dout),
     .dout(ics2115_dout),
     .we(!z_iorq_n && !z_wr_n && (z_adr[7:0] == 8'h02 || z_adr[7:0] == 8'h03)),
@@ -356,6 +356,10 @@ assign sdram_data = (adr[2:1] == 2'd0) ? sdram_buf[15:0]  :
 reg  sdram_ack_s1, sdram_ack_s2;
 always @(posedge fixed_20m_clk) {sdram_ack_s2, sdram_ack_s1} <= {sdram_ack_s1, sdram_ack_50};
 assign sdram_ack = sdram_ack_s2;
+
+reg  vid_ack_s1, vid_ack_s2;
+always @(posedge video_clk) {vid_ack_s2, vid_ack_s1} <= {vid_ack_s1, vid_ack_50};
+wire vid_ack = vid_ack_s2;
 
 // Robust Handshake for sound_ack (50MHz -> 8MHz)
 reg sound_ack_hold;
@@ -464,6 +468,7 @@ pgm_video video_inst (
     .ddram_addr(vid_addr),
     .ddram_dout(ddram_dout),
     .ddram_busy(ddram_busy || sdram_req), // Vídeo espera si CPU está usando el bus
+    .ddram_dout_ready(vid_ack),
     
     .hs(v_hs),
     .vs(v_vs),
