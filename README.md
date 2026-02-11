@@ -13,6 +13,7 @@ Para comprender a fondo el funcionamiento del núcleo, consulta los manuales esp
 - 📺 **[Motor de Video](docs/video.md)**: Detalles sobre el motor de sprites con zoom, capas de scroll y timings.
 - 🔊 **[Infraestructura de Sonido](docs/audio.md)**: Implementación del Z80, latches de comunicación e ICS2115.
 - 🕹️ **[Controles e I/O](docs/io.md)**: Mapeo de joysticks, botones y sistemas de entrada.
+- ⚙️ **[CI/CD y Compilación](docs/ci_cd.md)**: Detalles sobre el pipeline de GitHub Actions y compilación local.
 
 ---
 
