@@ -168,13 +168,22 @@ end
 
 wire [2:0] ipl_n = vblank_irq ? 3'b001 : 3'b111; // Level 6 or None
 
+// --- fx68k Clock Phase Enables ---
+// fx68k requires alternating single-cycle enPhi1/enPhi2 pulses.
+// Both=1 is ILLEGAL: enPhi1 branch never executes in else-if chains.
+// Divider: clk/4 gives ~6.25MHz effective CPU speed from 25MHz clock.
+reg [1:0] phi_cnt;
+always @(posedge fixed_20m_clk) phi_cnt <= phi_cnt + 2'd1;
+wire cpu_enPhi1 = (phi_cnt == 2'd3);
+wire cpu_enPhi2 = (phi_cnt == 2'd1);
+
 fx68k main_cpu (
     .clk(fixed_20m_clk),
     .HALTn(1'b1),
     .extReset(reset),
     .pwrUp(reset),
-    .enPhi1(1'b1),
-    .enPhi2(1'b1),
+    .enPhi1(cpu_enPhi1),
+    .enPhi2(cpu_enPhi2),
     .eab(adr),
     .iEdb(cpu68k_din),
     .oEdb(d_out),
@@ -291,12 +300,17 @@ wire [15:0] ics2115_l, ics2115_r;
 reg [23:0] beep_cnt;
 always @(posedge fixed_50m_clk) beep_cnt <= beep_cnt + 1'd1;
 
-wire beep_vblank = beep_cnt[16] & v_vs;      // ~380Hz tone when VSync is high
-wire beep_cpu    = beep_cnt[15] & sdram_req; // ~760Hz tone during ROM fetch
-wire beep_io     = beep_cnt[14] & io_sel;    // ~1.5kHz tone during I/O access
+// Unconditional heartbeat: always-on ~380Hz tone (proves audio path works)
+wire beep_heartbeat = beep_cnt[16];
 
-// Mix diagnostics (low volume) into final samples
-wire [15:0] diag_out = (beep_vblank ? 16'h0800 : 16'h0) + 
+wire beep_vblank = beep_cnt[15] & v_vs;      // ~760Hz tone when VSync is high
+wire beep_cpu    = beep_cnt[14] & sdram_req; // ~1.5kHz tone during ROM fetch
+wire beep_io     = beep_cnt[13] & io_sel;    // ~3kHz tone during I/O access
+
+// Mix diagnostics into final samples
+// Heartbeat at medium volume, others at lower volume
+wire [15:0] diag_out = (beep_heartbeat ? 16'h1000 : 16'h0) +
+                       (beep_vblank ? 16'h0800 : 16'h0) + 
                        (beep_cpu    ? 16'h0800 : 16'h0) + 
                        (beep_io     ? 16'h0800 : 16'h0);
 
