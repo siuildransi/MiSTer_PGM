@@ -147,7 +147,7 @@ PGM pgm_core (
     .v_b(core_b),
     .v_hs(core_hs),
     .v_vs(core_vs),
-    .v_blank(core_blank)
+    .v_blank_n(core_blank)
 );
 
 assign AUDIO_L = sample_l;

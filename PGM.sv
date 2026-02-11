@@ -38,7 +38,7 @@ module PGM (
     output [7:0]  v_b,
     output        v_hs,
     output        v_vs,
-    output        v_blank
+    output        v_blank_n
 );
 
 // --- 68000 Main CPU (fx68k) ---
@@ -316,6 +316,10 @@ endgenerate
 wire [10:1] spr_addr_vid;
 wire [15:0] spr_dout_vid = {wram_vid_h, wram_vid_l};
 
+// Video SDRAM interconnections
+wire        vid_rd;
+wire [28:0] vid_addr;
+
 // --- SDRAM Arbitrator (50MHz Domain) ---
 
 // Sync CPU Request to 50MHz
@@ -449,7 +453,7 @@ pgm_video video_inst (
     .r(v_r),
     .g(v_g),
     .b(v_b),
-    .blank_n(v_blank)
+    .blank_n(v_blank_n)
 );
 
 // CPU write access to Video Regs (VRAM y PAL ya gestionados por dpram_dc)
