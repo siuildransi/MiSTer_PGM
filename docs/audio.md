@@ -30,8 +30,10 @@ Para asegurar una baja latencia en los comandos de sonido, se ha implementado un
 
 ## Mapa de Registros del ICS2115
 El acceso se realiza de forma indirecta mediante dos puertos físicos Z80:
-- **Puerto `0x02`**: Selecciona el registro interno a acceder.
-- **Puerto `0x03`**: Lee/escribe el valor del registro seleccionado.
+- **Puerto `0x02`**: Selecciona el registro interno a acceder (Asignar `z_adr[0] = 0` al core).
+- **Puerto `0x03`**: Lee/escribe el valor del registro (Asignar `z_adr[0] = 1` al core).
+
+> **⚠️ NOTA TÉCNICA**: El core `ics2115.sv` utiliza un puerto `.addr(1:0)` donde solo se deben usar los bits bajos. En `PGM.sv`, la conexión debe ser `.addr({1'b0, z_adr[0]})` para asegurar que los puertos I/O `0x02` y `0x03` se mapeen a los índices `0` y `1` respectivamente. Usar `z_adr[1:0]` mapearía incorrectamente a `2` y `3`.
 
 ### Registros Indirectos Clave
 
