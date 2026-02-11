@@ -216,10 +216,10 @@ assign VGA_F1 = 1'b0;
 assign VGA_SCALER = 2'b00;
 assign VGA_DISABLE = 1'b0;
 
-// --- Valores por Defecto ---
-assign LED_USER  = 8'h00;
-assign LED_POWER = 8'h01;
-assign LED_DISK  = 8'h00;
+// --- Valores por Defecto y LEDs ---
+assign LED_USER  = led_diag;         // Los 8 LEDs de la placa interna
+assign LED_POWER = 8'h01;            // Power fijo
+assign LED_DISK  = {7'b0, led_diag[1]}; // El LED de "Disco" ahora indica SDRAM
 
 assign SDRAM_A    = 13'h0;
 assign SDRAM_BA   = 2'b00;
