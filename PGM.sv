@@ -345,6 +345,9 @@ reg        vid_ack_50;
 reg        sound_ack_50;
 reg [63:0] sdram_buf;
 
+reg sound_rd_last; // Edge detection for audio
+always @(posedge fixed_50m_clk) sound_rd_last <= sound_rd_s2;
+
 assign sdram_data = (adr[2:1] == 2'd0) ? sdram_buf[15:0]  :
                     (adr[2:1] == 2'd1) ? sdram_buf[31:16] :
                     (adr[2:1] == 2'd2) ? sdram_buf[47:32] : sdram_buf[63:48];
@@ -354,8 +357,22 @@ reg  sdram_ack_s1, sdram_ack_s2;
 always @(posedge fixed_20m_clk) {sdram_ack_s2, sdram_ack_s1} <= {sdram_ack_s1, sdram_ack_50};
 assign sdram_ack = sdram_ack_s2;
 
+// Robust Handshake for sound_ack (50MHz -> 8MHz)
+reg sound_ack_hold;
+always @(posedge fixed_50m_clk) begin
+    if (reset) begin
+        sound_ack_hold <= 0;
+    end else begin
+        if (arb_state == ARB_AUDIO && ddram_dout_ready) begin
+            sound_ack_hold <= 1; // Set when data available
+        end else if (!sound_rd_s2) begin
+            sound_ack_hold <= 0; // Clear ONLY when request is dropped by source
+        end
+    end
+end
+
 reg  sound_ack_s1, sound_ack_s2;
-always @(posedge fixed_8m_clk) {sound_ack_s2, sound_ack_s1} <= {sound_ack_s1, sound_ack_50};
+always @(posedge fixed_8m_clk) {sound_ack_s2, sound_ack_s1} <= {sound_ack_s1, sound_ack_hold};
 assign sound_ack = sound_ack_s2;
 
 always @(posedge fixed_50m_clk) begin
@@ -376,7 +393,7 @@ always @(posedge fixed_50m_clk) begin
                     arb_state <= ARB_CPU;
                 end else if (vid_rd_s2) begin
                     arb_state <= ARB_VIDEO;
-                end else if (sound_rd_s2) begin
+                end else if (sound_rd_s2 && !sound_rd_last) begin // Edge detection
                     arb_state <= ARB_AUDIO;
                 end
             end
@@ -398,7 +415,7 @@ always @(posedge fixed_50m_clk) begin
 
             ARB_AUDIO: begin
                 if (ddram_dout_ready) begin
-                    sound_ack_50 <= 1;
+                    // sound_ack_50 <= 1; // Removed, using sound_ack_hold logic
                     arb_state <= ARB_IDLE;
                 end
             end

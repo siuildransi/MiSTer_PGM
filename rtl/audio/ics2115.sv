@@ -135,10 +135,13 @@ always @(posedge clk) begin
 
             TDM_FINISH: begin
                 // Aplicar saturación y volumen global (simplificado)
-                final_l <= (mix_l[23]) ? (mix_l < -24'sd32768 ? 16'h8000 : mix_l[15:0]) : 
-                                         (mix_l > 24'sd32767  ? 16'h7FFF : mix_l[15:0]);
-                final_r <= (mix_r[23]) ? (mix_r < -24'sd32768 ? 16'h8000 : mix_r[15:0]) : 
-                                         (mix_r > 24'sd32767  ? 16'h7FFF : mix_r[15:0]);
+                if (mix_l > 24'sd32767)       final_l <= 16'sh7FFF;
+                else if (mix_l < -24'sd32768) final_l <= 16'sh8000;
+                else                          final_l <= mix_l[15:0];
+
+                if (mix_r > 24'sd32767)       final_r <= 16'sh7FFF;
+                else if (mix_r < -24'sd32768) final_r <= 16'sh8000;
+                else                          final_r <= mix_r[15:0];
                 tdm_state <= TDM_IDLE;
             end
         endcase
