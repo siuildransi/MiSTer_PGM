@@ -20,3 +20,4 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/ics2115.sv
 # Video
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/dpram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/pgm_video.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/protection/igs027a_hle.sv

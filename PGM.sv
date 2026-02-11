@@ -56,6 +56,7 @@ wire vram_sel  = (adr[23:17] == 7'b1001000); // 900000 - 907FFF (VRAM)
 wire pal_sel   = (adr[23:17] == 7'b1010000); // A00000 - A011FF (Palette)
 wire vreg_sel  = (adr[23:16] == 8'hB0);      // B00000 - B0FFFF (Registers)
 wire io_sel    = (adr[23:16] == 8'hC0);      // C00000 - C0FFFF (I/O, Sound Latch)
+wire prot_sel  = (adr[23:16] == 8'h40);      // 400000 - 40FFFF (Type 3 Protection)
 
 // --- Main Work RAM (128KB = 64K words) via dpram_dc ---
 // Puerto A: CPU 68k (20MHz) - lectura/escritura
@@ -128,6 +129,9 @@ always @(*) begin
             if (adr[15:1] == 15'h0002) cpu68k_din = {8'h00, sound_latch_2}; // C00004 R
             if (adr[15:1] == 15'h4000) cpu68k_din = pgm_inputs;            // C08000
             if (adr[15:1] == 15'h4002) cpu68k_din = pgm_system;            // C08004
+        end else if (prot_sel) begin
+            cpu68k_dtack_n = prot_dtack_n;
+            cpu68k_din = prot_dout;
         end
     end
 end
@@ -476,6 +480,21 @@ pgm_video video_inst (
     .g(v_g),
     .b(v_b),
     .blank_n(v_blank_n)
+);
+
+// --- Type 3 Protection (IGS027A HLE) ---
+wire [15:0] prot_dout;
+wire prot_dtack_n;
+
+igs027a_hle protection_inst (
+    .clk(fixed_20m_clk),
+    .reset(reset),
+    .addr(adr[4:1]),
+    .din(d_out),
+    .dout(prot_dout),
+    .we(prot_sel && !rw_n && !as_n),
+    .re(prot_sel && rw_n && !as_n),
+    .dtack_n(prot_dtack_n)
 );
 
 // CPU write access to Video Regs (VRAM y PAL ya gestionados por dpram_dc)
