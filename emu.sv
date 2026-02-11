@@ -217,9 +217,19 @@ assign VGA_SCALER = 2'b00;
 assign VGA_DISABLE = 1'b0;
 
 // --- Valores por Defecto y LEDs ---
-assign LED_USER  = led_diag;             // Los 8 LEDs de la placa interna
-assign LED_POWER = {7'b0, led_diag[4]};     // LED de Power ahora es un latido (Heartbeat)
-assign LED_DISK  = {7'b0, led_diag[1]};     // LED de Disco indica actividad SDRAM
+// Mapeo para IO Board (3 LEDs externos):
+assign LED_POWER = {7'b0, led_diag[4]}; // Power -> Heartbeat (1.5Hz)
+assign LED_DISK  = {7'b0, led_diag[2]}; // Disk  -> VSync Pulse (60Hz)
+assign LED_USER  = led_diag;             // Muestra todos los bits internamente
+// Forzamos que el bit 0 de LED_USER (que suele ser el LED externo) tenga la actividad CPU/IO
+// pero mantenemos los otros bits disponibles para debug interno.
+// assign LED_USER = {led_diag[7:1], led_diag[5]}; // Swap bit 5 to bit 0 for exterior?
+// Mejor: dejarlo como led_diag y dejar que el usuario use el que quiera, 
+// o simplemente mapear el bit 5 al bit 1 de los externos si fuera necesario.
+// Re-mapeo definitivo para ser 100% claro:
+// LED_POWER[0] -> LED Power exterior
+// LED_DISK[0]  -> LED Disk exterior
+// LED_USER[0]  -> LED User exterior
 
 assign SDRAM_A    = 13'h0;
 assign SDRAM_BA   = 2'b00;

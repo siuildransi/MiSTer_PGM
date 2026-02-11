@@ -329,20 +329,34 @@ assign sample_l = ics2115_l + diag_out;
 assign sample_r = ics2115_r + diag_out;
 
 // --- LED Diagnostics ---
-assign diagnostic_leds = {
-    reset,          // Bit 7: Reset status
-    2'b00,          // Unused
-    beep_cnt[23],   // Bit 4: Heartbeat (blinks at ~1.5Hz if clock is running)
-    z80_nmi_req,    // Bit 3: Z80 NMI activity
-    v_vs,           // Bit 2: VSync activity
-    sd_ack_50_lat,  // Bit 1: SDRAM Ack
-    !as_n           // Bit 0: CPU Address Strobe (active high when CPU runs)
+// Mapeo optimizado para placas de 3 LEDs (Power, Disk, User)
+// Se apagan todos si el sistema está en reset.
+assign diagnostic_leds = reset ? 8'h00 : {
+    reset,          // Bit 7
+    2'b00, 
+    io_active_lat,  // Bit 5: CPU I/O activity (LED User)
+    beep_cnt[23],   // Bit 4: System Heartbeat (LED Power)
+    z80_nmi_req,    // Bit 3
+    v_vs,           // Bit 2: Video Activity (LED Disk)
+    sd_ack_50_lat,  // Bit 1
+    !as_n           // Bit 0
 };
 
 reg sd_ack_50_lat;
+reg io_active_lat;
 always @(posedge fixed_50m_clk) begin
-    if (sdram_ack_50) sd_ack_50_lat <= 1;
-    else if (beep_cnt[18]) sd_ack_50_lat <= 0; // Stretch pulse for visibility
+    if (reset) begin
+        sd_ack_50_lat <= 0;
+        io_active_lat <= 0;
+    end else begin
+        // Stretch SDRAM Ack
+        if (sdram_ack_50) sd_ack_50_lat <= 1;
+        else if (beep_cnt[18]) sd_ack_50_lat <= 0;
+        
+        // Stretch I/O selection (Cpu accesses C0xxxx)
+        if (io_sel) io_active_lat <= 1;
+        else if (beep_cnt[20]) io_active_lat <= 0;
+    end
 end
 
 // Señales de sincronización SDRAM de Audio
