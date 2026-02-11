@@ -331,11 +331,12 @@ assign sample_r = ics2115_r + diag_out;
 // --- LED Diagnostics ---
 assign diagnostic_leds = {
     reset,          // Bit 7: Reset status
-    3'b000,         // Unused
+    2'b00,          // Unused
+    beep_cnt[23],   // Bit 4: Heartbeat (blinks at ~1.5Hz if clock is running)
     z80_nmi_req,    // Bit 3: Z80 NMI activity
     v_vs,           // Bit 2: VSync activity
-    sd_ack_50_lat,  // Bit 1: SDRAM Ack (approximation)
-    !as_n           // Bit 0: CPU Address Strobe (active low)
+    sd_ack_50_lat,  // Bit 1: SDRAM Ack
+    !as_n           // Bit 0: CPU Address Strobe (active high when CPU runs)
 };
 
 reg sd_ack_50_lat;
