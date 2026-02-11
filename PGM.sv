@@ -115,7 +115,8 @@ always @(*) begin
             cpu68k_din = {wram_rd_h, wram_rd_l};
         end else if (bios_sel || prom_sel) begin
             sdram_req = 1'b1;
-            cpu68k_din = sdram_data;
+            // Byte swap for 68k (Big Endian)
+            cpu68k_din = {sdram_data[7:0], sdram_data[15:8]};
             if (sdram_ack) cpu68k_dtack_n = 1'b0;
         end else if (vram_sel) begin
             cpu68k_dtack_n = 1'b0;
@@ -163,7 +164,7 @@ always @(posedge fixed_20m_clk) begin
     vs_s1 <= v_vs;
     vs_s2 <= vs_s1;
     if (vs_s1 && !vs_s2) vblank_irq <= 1; // Start of VS
-    else if (!v_blank_n) vblank_irq <= 0; // Clear at end of blank (simplified)
+    else if (!vs_s1 && vs_s2) vblank_irq <= 0; // End of VS
 end
 
 wire [2:0] ipl_n = vblank_irq ? 3'b001 : 3'b111; // Level 6 or None

@@ -129,17 +129,20 @@ assign VIDEO_ARX = 13'd4;     // Relación de aspecto 4:3
 assign VIDEO_ARY = 13'd3;
 
 // --- Relojes de CPU ---
-// 68k: ~12.5 MHz (50/4, suficiente para skeleton)
+// 68k: 25 MHz (50/2)
 wire clk_20m;
-reg [1:0] div20;
-always @(posedge CLK_50M) div20 <= div20 + 2'd1;
-assign clk_20m = div20[1];
+reg div20;
+always @(posedge CLK_50M) div20 <= ~div20;
+assign clk_20m = div20;
 
-// Z80: ~6.25 MHz (50/8 ≈ 6.25 MHz, próximo a 8.468MHz del PGM real)
+// Z80: 8.33 MHz (50/6)
 wire clk_8m;
-reg [2:0] div8;
-always @(posedge CLK_50M) div8 <= div8 + 3'd1;
-assign clk_8m = div8[2];
+reg [2:0] div6;
+always @(posedge CLK_50M) begin
+    if (div6 == 5) div6 <= 0;
+    else div6 <= div6 + 3'd1;
+end
+assign clk_8m = (div6 < 3);
 
 // --- PGM Core ---
 wire [15:0] sample_l, sample_r;
