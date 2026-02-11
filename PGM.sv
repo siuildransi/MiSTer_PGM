@@ -391,10 +391,8 @@ always @(posedge fixed_50m_clk) begin
         sdram_ack_50 <= 0;
         vid_ack_50 <= 0;
     end else if (ioctl_download) begin
-        // Passthrough total para el Loader con Latch de escritura
+        // Passthrough total para el Loader (latch de escritura está en bloque aparte)
         arb_state <= ARB_IDLE;
-        if (ioctl_wr && (ioctl_index == 8'h00)) ioctl_wr_pending <= 1;
-        else if (!ddram_busy) ioctl_wr_pending <= 0;
     end else begin
         case (arb_state)
             ARB_IDLE: begin
@@ -435,24 +433,48 @@ always @(posedge fixed_50m_clk) begin
     end
 end
 
-// Physical SDRAM Mux
-assign ddram_addr = ioctl_download ? {5'b0, ioctl_addr[26:3]} :
+// Physical SDRAM Mux — Loader Write Latch (Avalon-MM compliant)
+// Latcheamos addr/data/be cuando llega ioctl_wr para que no cambien
+// mientras esperamos a que ddram_busy baje.
+reg [28:0] wr_addr_lat;
+reg [63:0] wr_data_lat;
+reg [7:0]  wr_be_lat;
+
+always @(posedge fixed_50m_clk) begin
+    if (reset || !ioctl_download) begin
+        ioctl_wr_pending <= 0;
+    end else if (ioctl_wr && (ioctl_index == 8'h00) && !ioctl_wr_pending) begin
+        ioctl_wr_pending <= 1;
+        wr_addr_lat <= {5'b0, ioctl_addr[26:3]};
+        wr_data_lat <= {4{ioctl_dout}};
+        wr_be_lat   <= (ioctl_addr[2:1] == 2'd0) ? 8'h03 :
+                       (ioctl_addr[2:1] == 2'd1) ? 8'h0C :
+                       (ioctl_addr[2:1] == 2'd2) ? 8'h30 : 8'hC0;
+    end else if (ioctl_wr_pending && !ddram_busy) begin
+        ioctl_wr_pending <= 0;
+    end
+end
+
+// Address Mux
+assign ddram_addr = ioctl_download ? wr_addr_lat :
                     (arb_state == ARB_CPU)   ? {5'b0, adr[23:3]} : 
                     (arb_state == ARB_AUDIO) ? sound_addr : vid_addr;
-                    
-assign ddram_we   = ioctl_download ? (ioctl_wr || ioctl_wr_pending) && (ioctl_index == 8'h00) : 
+
+// Write Enable — SOLO durante download con latch activo
+assign ddram_we   = ioctl_wr_pending;
+
+// Read Enable — SOLO fuera de download, cuando el árbitro tiene un slot activo
+assign ddram_rd   = ioctl_download ? 1'b0 : 
                     (arb_state == ARB_CPU)   ? 1'b1 :
                     (arb_state == ARB_VIDEO) ? 1'b1 :
                     (arb_state == ARB_AUDIO) ? 1'b1 : 1'b0;
 
-assign ddram_din  = {4{ioctl_dout}};
-assign ddram_be   = ioctl_download ? 
-                    ((ioctl_addr[2:1] == 2'd0) ? 8'h03 :
-                     (ioctl_addr[2:1] == 2'd1) ? 8'h0C :
-                     (ioctl_addr[2:1] == 2'd2) ? 8'h30 : 8'hC0) : 8'hFF;
+// Data/BE — valores latcheados durante download, defaults para lectura
+assign ddram_din  = wr_data_lat;
+assign ddram_be   = ioctl_wr_pending ? wr_be_lat : 8'hFF;
 
-// Señal de espera: pausa al HPS si DDRAM está ocupada o hay una escritura pendiente
-assign ioctl_wait = ioctl_download & (ddram_busy || ioctl_wr_pending);
+// Señal de espera: pausa al HPS mientras haya una escritura pendiente
+assign ioctl_wait = ioctl_wr_pending;
 
 // El motor de video recibe los datos directamente del bus principal
 // Sincronizamos ddram_dout_ready para pgm_video? 
