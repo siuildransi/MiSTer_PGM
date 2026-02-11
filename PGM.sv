@@ -170,12 +170,15 @@ end
 wire [2:0] ipl_n = vblank_irq ? 3'b001 : 3'b111; // Level 6 or None
 
 // --- Generación de Reloj para fx68k ---
-// El 68000 del PGM real corre a 20MHz. Aquí usamos el reloj de 25MHz
-// directamente para asegurar fluidez y arranque rápido.
-wire cpu_enPhi1 = 1'b1;
-wire cpu_enPhi2 = 1'b1;
-// NOTA: fx68k puede configurarse de varias formas, si enPhi1/2 fijos
-// dan problemas, se puede usar un flip-flop para alternarlos.
+// El 68000 requiere fases phi1 y phi2 alternas.
+// Con el clk de 25MHz, generamos estas fases a 12.5MHz.
+reg phi_state;
+always @(posedge fixed_20m_clk) begin
+    if (reset) phi_state <= 0;
+    else phi_state <= ~phi_state;
+end
+wire cpu_enPhi1 = phi_state;
+wire cpu_enPhi2 = ~phi_state;
 
 fx68k main_cpu (
     .clk(fixed_20m_clk),
@@ -308,13 +311,15 @@ wire beep_cpu    = beep_cnt[14] & sdram_req; // ~1.5kHz tone during ROM fetch
 wire beep_io     = beep_cnt[13] & io_sel;    // ~3kHz tone during I/O access
 
 // Mix diagnostics into final samples
-// Mute all diagnostics during reset or ROM download
+// Mezclar diagnósticos en las muestras finales
+// Solo silenciar durante la descarga de la ROM (ioctl_download)
+// Mantenemos el pitido durante el reset para confirmar que el audio funciona
 wire [15:0] diag_raw = (beep_heartbeat ? 16'h1000 : 16'h0) +
                        (beep_vblank    ? 16'h0800 : 16'h0) + 
                        (beep_cpu       ? 16'h0800 : 16'h0) + 
                        (beep_io        ? 16'h0800 : 16'h0);
 
-wire [15:0] diag_out = (reset || ioctl_download) ? 16'h0000 : diag_raw;
+wire [15:0] diag_out = ioctl_download ? 16'h0000 : diag_raw;
 
 assign sample_l = ics2115_l + diag_out;
 assign sample_r = ics2115_r + diag_out;
