@@ -41,6 +41,7 @@ assign dout = (addr == 2'b01) ? regs[cur_reg_addr] : 8'h00;
 
 // --- 32-Voice TDM Engine ---
 reg [4:0]  voice_cnt;       // 0-31 voices
+reg [4:0]  selected_voice;  // Voz seleccionada para acceso host (Reg 0x08)
 reg [1:0]  tdm_state;
 localparam TDM_IDLE   = 2'd0;
 localparam TDM_FETCH  = 2'd1;
@@ -62,6 +63,7 @@ integer v;
 always @(posedge clk) begin
     if (reset) begin
         voice_cnt <= 0;
+        selected_voice <= 0;
         tdm_state <= TDM_IDLE;
         v_active <= 0;
         mix_l <= 0;
@@ -72,6 +74,24 @@ always @(posedge clk) begin
             v_incr[v] <= 0;
         end
     end else begin
+        // --- Host Register Interface (Z80) ---
+        if (we) begin
+            case (addr)
+                2'b00: cur_reg_addr <= din;
+                2'b01: begin
+                    regs[cur_reg_addr] <= din;
+                    case (cur_reg_addr)
+                        8'h08: selected_voice <= din[4:0];
+                        8'h40: v_active[selected_voice] <= din[0];
+                        8'h41: v_addr[selected_voice][7:0] <= din;
+                        8'h42: v_addr[selected_voice][15:8] <= din;
+                        8'h43: v_addr[selected_voice][23:16] <= din;
+                    endcase
+                end
+            endcase
+        end
+
+        // --- TDM Mixing FSM ---
         case (tdm_state)
             TDM_IDLE: begin
                 // Comenzar ciclo de mezcla cada vez que voice_cnt vuelve a 0
