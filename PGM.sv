@@ -51,7 +51,7 @@ reg cpu68k_dtack_n;
 
 // Memory Decoding (PGM Map)
 wire bios_sel  = (adr[23:20] == 4'h0);      // 000000 - 0FFFFF (BIOS en SDRAM)
-wire prom_sel  = (adr[23:20] >= 4'h1 && adr[23:20] <= 4'h3); // 100000 - 3FFFFF (P-ROM en SDRAM)
+wire prom_sel  = (adr[23:20] >= 4'h1 && adr[23:20] <= 4'h9); // 100000 - 9FFFFF (P-ROM en SDRAM)
 wire ram_sel   = (adr[23:17] == 7'b1000000); // 800000 - 81FFFF (Work RAM)
 wire vram_sel  = (adr[23:17] == 7'b1001000); // 900000 - 907FFF (VRAM)
 wire pal_sel   = (adr[23:17] == 7'b1010000); // A00000 - A011FF (Palette)
@@ -156,6 +156,18 @@ end
 reg z80_nmi_ack_20;
 always @(posedge fixed_20m_clk) z80_nmi_ack_20 <= z80_nmi_ack_8m;
 
+// --- VBLANK IRQ (Level 6) ---
+reg vblank_irq;
+reg vs_s1, vs_s2;
+always @(posedge fixed_20m_clk) begin
+    vs_s1 <= v_vs;
+    vs_s2 <= vs_s1;
+    if (vs_s1 && !vs_s2) vblank_irq <= 1; // Start of VS
+    else if (!v_blank_n) vblank_irq <= 0; // Clear at end of blank (simplified)
+end
+
+wire [2:0] ipl_n = vblank_irq ? 3'b001 : 3'b111; // Level 6 or None
+
 fx68k main_cpu (
     .clk(fixed_20m_clk),
     .HALTn(1'b1),
@@ -171,9 +183,9 @@ fx68k main_cpu (
     .LDSn(lds_n),
     .eRWn(rw_n),
     .DTACKn(cpu68k_dtack_n),
-    .IPL0n(1'b1),
-    .IPL1n(1'b1),
-    .IPL2n(1'b1),
+    .IPL0n(ipl_n[0]),
+    .IPL1n(ipl_n[1]),
+    .IPL2n(ipl_n[2]),
     .VPAn(1'b1),
     .BRn(1'b1),
     .BGACKn(1'b1),

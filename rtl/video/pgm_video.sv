@@ -177,7 +177,8 @@ always @(posedge clk) begin
                 ddram_rd <= 1'b1;
                 // Calcular dirección SDRAM:
                 // base_code * tamaño + y_offset * stride + x_word
-                ddram_addr <= {5'd0, line_sprites[fetch_sprite_idx].code, 3'd0} + 
+                // Offset Sprites (A-ROM): 0x0F00000 bytes = 0x1E0000 words
+                ddram_addr <= 29'h1E0000 + {5'd0, line_sprites[fetch_sprite_idx].code, 3'd0} + 
                               {12'd0, line_sprites[fetch_sprite_idx].source_y_offset, 5'd0} + 
                               {25'd0, sdram_word_idx, 2'd0};
             end
@@ -186,10 +187,11 @@ always @(posedge clk) begin
         end else if (tile_state == TILE_SDRAM && tile_write_cnt == 0) begin
             if (!ddram_busy && !ddram_rd) begin
                 ddram_rd <= 1'b1;
+                // Offset Tiles (T-ROM): 0x700000 bytes = 0x0E0000 words
                 if (tx_fetch_cnt < 56) 
-                    ddram_addr <= {7'd0, tx_tile_idx[11:0], 5'd0} + {24'd0, tx_tile_line[2:1], 3'd0}; 
+                    ddram_addr <= 29'h0E0000 + {7'd0, tx_tile_idx[11:0], 5'd0} + {24'd0, tx_tile_line[2:1], 3'd0}; 
                 else 
-                    ddram_addr <= {2'd1, bg_tile_idx[11:0], 15'd0} + {bg_tile_line, bg_sdram_phase};
+                    ddram_addr <= 29'h0E0000 + {2'd1, bg_tile_idx[11:0], 15'd0} + {bg_tile_line, bg_sdram_phase};
             end else if (ddram_dout_ready) ddram_rd <= 1'b0;
         end else ddram_rd <= 1'b0;
     end

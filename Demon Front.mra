@@ -11,15 +11,19 @@
     <!-- ROM Loading Order for PGM Core -->
     <!-- All data goes to DDRAM sequentially via ioctl index 0 -->
     <!-- Core memory map (byte offsets in DDRAM):                -->
-    <!--   0x000000: P-ROM (Main 68k Program)                    -->
-    <!--   0x600000: T-ROM (Tilemap/Text Graphics)               -->
-    <!--   0xE00000: A-ROM (Sprite Graphics)                     -->
-    <!--   0x2600000: B-ROM (Sprite Masks/Attributes)            -->
-    <!--   0x3000000: W-ROM (Audio Samples - ICS2115)            -->
+    <!--   0x000000: BIOS (1MB Reserved)                         -->
+    <!--   0x100000: P-ROM (Main 68k Program)                    -->
+    <!--   0x700000: T-ROM (Tilemap/Text Graphics)               -->
+    <!--   0xF00000: A-ROM (Sprite Graphics)                     -->
+    <!--   0x2700000: B-ROM (Sprite Masks/Attributes)            -->
+    <!--   0x3100000: W-ROM (Audio Samples - ICS2115)            -->
 
-    <rom index="0" zip="dmnfrnt.zip" md5="None">
+    <rom index="0" zip="dmnfrnt.zip|pgm.zip" md5="None">
+        <!-- BIOS: Mapped to 0x000000 -> 0x0FFFFF -->
+        <part name="pgm_v122.u1" zip="pgm.zip"/>
+        <pad size="0x80000"/> <!-- Pad to 1MB (512KB + 512KB) -->
+
         <!-- P-ROM: Main CPU Program (68000) - 6MB total -->
-        <!-- Word-swapped 16-bit ROM data -->
         <part name="v105_32m.u26"/>
         <part name="v105_16m.u5"/>
 

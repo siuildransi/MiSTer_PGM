@@ -96,7 +96,8 @@ always @(posedge clk) begin
             TDM_FETCH: begin
                 if (v_active[voice_cnt]) begin
                     sdram_rd <= 1;
-                    sdram_addr <= {5'b0, v_addr[voice_cnt]};
+                    // Offset Audio Samples (W-ROM): 0x3100000 bytes = 0x620000 words
+                    sdram_addr <= 29'h620000 + {5'b0, v_addr[voice_cnt]};
                     if (sdram_dout_ready) begin
                         sdram_rd <= 0;
                         tdm_state <= TDM_MIX;
