@@ -77,35 +77,6 @@ dpram_dc #(16, 8) wram_lo_inst (
     .clk_b(video_clk),    .addr_b({8'd0, spr_addr_vid[8:1]}), .dout_b(wram_vid_l)
 );
 
-// SDRAM Interface & DTACK Logic
-reg  sdram_req;
-wire sdram_ack;
-wire [15:0] sdram_data;
-
-always @(*) begin
-    cpu68k_dtack_n = 1'b1;
-    cpu68k_din = 16'hFFFF;
-    sdram_req = 1'b0;
-
-    if (!as_n) begin
-        if (ram_sel) begin
-            cpu68k_dtack_n = 1'b0;
-            cpu68k_din = {wram_rd_h, wram_rd_l};
-        end else if (bios_sel || prom_sel) begin
-            sdram_req = 1'b1;
-            cpu68k_din = sdram_data;
-            if (sdram_ack) cpu68k_dtack_n = 1'b0;
-        end else if (pal_sel || vram_sel) begin
-            // Paleta y VRAM en este core son BRAM instantánea
-            cpu68k_dtack_n = 1'b0;
-            // Din se maneja abajo en mux de lectura
-        end else if (io_sel) begin
-            cpu68k_dtack_n = 1'b0;
-            // Din se maneja abajo en mux de lectura
-        end
-    end
-end
-
 // Input Mapping Logic (Active Low)
 // PGM Register C08000: Player 1 (Low Byte), Player 2 (High Byte)
 // Bit Order (MAME/PGM): 0:UP, 1:DOWN, 2:LEFT, 3:RIGHT, 4:B1(A), 5:B2(B), 6:B3(C), 7:B4(D)
@@ -126,21 +97,37 @@ wire [15:0] pgm_system = ~{
     joystick_1[9], joystick_0[9]  // Coin 2, Coin 1
 };
 
-// Reading mux
+// SDRAM Interface & DTACK Logic
+reg  sdram_req;
+wire sdram_ack;
+wire [15:0] sdram_data;
+
 always @(*) begin
-    case (1'b1)
-        ram_sel:  cpu68k_din = {wram_rd_h, wram_rd_l};
-        bios_sel: cpu68k_din = sdram_data;
-        prom_sel: cpu68k_din = sdram_data;
-        vram_sel: cpu68k_din = vram_dout_vid; // Simplificado
-        pal_sel:  cpu68k_din = pal_dout_vid;  // Simplificado
-        io_sel: begin
+    cpu68k_dtack_n = 1'b1;
+    cpu68k_din = 16'hFFFF;
+    sdram_req = 1'b0;
+
+    if (!as_n) begin
+        if (ram_sel) begin
+            cpu68k_dtack_n = 1'b0;
+            cpu68k_din = {wram_rd_h, wram_rd_l};
+        end else if (bios_sel || prom_sel) begin
+            sdram_req = 1'b1;
+            cpu68k_din = sdram_data;
+            if (sdram_ack) cpu68k_dtack_n = 1'b0;
+        end else if (vram_sel) begin
+            cpu68k_dtack_n = 1'b0;
+            cpu68k_din = vram_dout_vid;
+        end else if (pal_sel) begin
+            cpu68k_dtack_n = 1'b0;
+            cpu68k_din = pal_dout_vid;
+        end else if (io_sel) begin
+            cpu68k_dtack_n = 1'b0;
             cpu68k_din = 16'hFFFF;
             if (adr[15:1] == 15'h4000) cpu68k_din = pgm_inputs; // 8000 >> 1
             if (adr[15:1] == 15'h4002) cpu68k_din = pgm_system; // 8004 >> 1
         end
-        default:  cpu68k_din = 16'hFFFF;
-    endcase
+    end
 end
 
 fx68k main_cpu (
