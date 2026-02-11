@@ -475,7 +475,6 @@ pgm_video video_inst (
     .ddram_rd(vid_rd),
     .ddram_addr(vid_addr),
     .ddram_dout(ddram_dout),
-    .ddram_dout_ready(ddram_dout_ready),
     .ddram_busy(ddram_busy || sdram_req), // Vídeo espera si CPU está usando el bus
     .ddram_dout_ready(vid_ack),
     
