@@ -1,41 +1,47 @@
 <misterromdescription>
-    <name>Demon Front</name>
+    <name>Demon Front (V105)</name>
     <mameversion>0245</mameversion>
     <setname>dmnfrnt</setname>
-    <mratimestamp>20260210000000</mratimestamp>
+    <mratimestamp>20260211120000</mratimestamp>
     <year>2002</year>
     <manufacturer>IGS</manufacturer>
     <category>Run n Gun</category>
     <rbf>PGM</rbf>
-    
-    <!-- ROM Loading Organization -->
-    <!-- SDRAM Address Map: -->
-    <!-- 0x000000: BIOS (128KB - if present) -->
-    <!-- 0x100000: P-ROM (Main CPU Code) -->
-    <!-- 0x...: A-ROM (Sprite Data) -->
-    
-    <rom index="0" zip="dmnfrnt.zip" md5="None">
-        <!-- Main CPU Program (P-ROM) -->
-        <!-- Loaded at start of SDRAM (offset 0)? -->
-        <!-- Or we need padding if we want it at 0x100000? -->
-        <!-- For now, we load it at 0. Core must remap. -->
-        <!-- Or we prepend BIOS? -->
-        
-        <!-- Part 1: P-ROM 'ige_v105.u20' (size ~?) -->
-        <part name="ige_v105.u20"/>
-        
-        <!-- Part 2: T-ROM (Tilemap) 'ige_t01.u22' -->
-        <part name="ige_t01.u22"/>
-        
-        <!-- Part 3: A-ROM (Sprite Data) 'ige_a01.u11' -->
-        <!-- Part 4: B-ROM (Sprite Attr) 'ige_b01.u8' -->
-        <part name="ige_a01.u11"/>
-        <part name="ige_b01.u8"/>
-        
-        <!-- Part 5: Audio CPU 'ige_m01.u6' -->
-        <part name="ige_m01.u6"/>
-        
-        <!-- Part 6: Samples 'ige_s01.u3' -->
-        <part name="ige_s01.u3"/>
+
+    <!-- ============================================= -->
+    <!-- index=0: Todo lo que va a SDRAM (DDRAM)       -->
+    <!-- Se carga secuencialmente desde offset 0       -->
+    <!-- ============================================= -->
+    <rom index="0" zip="pgm.zip|dmnfrnt.zip" md5="None">
+        <!-- 1. PGM BIOS (512KB) - desde pgm.zip -->
+        <part name="pgm_p01s.u20"/>
+
+        <!-- 2. Main CPU Program (P-ROM V105) - desde dmnfrnt.zip -->
+        <part name="v105_16m.u5"/>
+
+        <!-- 3. T-ROM (Tilemap/Text Graphics) -->
+        <part name="pgm_t01s.rom"/>
+        <part name="t04501.u29"/>
+
+        <!-- 4. A-ROM (Sprite Pixel Data) -->
+        <part name="a04501.u3"/>
+        <part name="a04502.u4"/>
+        <part name="a04503.u6"/>
+
+        <!-- 5. B-ROM (Sprite Mask/Attributes) -->
+        <part name="b04501.u9"/>
+        <part name="b04502.u11"/>
+    </rom>
+
+    <!-- ============================================= -->
+    <!-- index=1: Audio (Z80 ROM + Samples)            -->
+    <!-- Va a Sound RAM vía dpram_dc                   -->
+    <!-- ============================================= -->
+    <rom index="1" zip="pgm.zip|dmnfrnt.zip" md5="None">
+        <!-- Z80 Program ROM -->
+        <part name="pgm_m01s.rom"/>
+
+        <!-- ICS2115 Wavetable Samples -->
+        <part name="w04501.u5"/>
     </rom>
 </misterromdescription>
