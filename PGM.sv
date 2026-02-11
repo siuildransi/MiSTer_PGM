@@ -282,9 +282,27 @@ ics2115 ics2115_inst (
     .sdram_busy(ddram_busy || sdram_req || vid_rd), // Audio tiene prioridad baja
     .sdram_dout_ready(sound_ack),
 
-    .sample_l(sample_l),
-    .sample_r(sample_r)
+    .sample_l(ics2115_l),
+    .sample_r(ics2115_r)
 );
+
+wire [15:0] ics2115_l, ics2115_r;
+
+// --- Diagnostic Audio (Beeps) ---
+reg [23:0] beep_cnt;
+always @(posedge fixed_50m_clk) beep_cnt <= beep_cnt + 1'd1;
+
+wire beep_vblank = beep_cnt[16] & v_vs;      // ~380Hz tone when VSync is high
+wire beep_cpu    = beep_cnt[15] & sdram_req; // ~760Hz tone during ROM fetch
+wire beep_io     = beep_cnt[14] & io_sel;    // ~1.5kHz tone during I/O access
+
+// Mix diagnostics (low volume) into final samples
+wire [15:0] diag_out = (beep_vblank ? 16'h0800 : 16'h0) + 
+                       (beep_cpu    ? 16'h0800 : 16'h0) + 
+                       (beep_io     ? 16'h0800 : 16'h0);
+
+assign sample_l = ics2115_l + diag_out;
+assign sample_r = ics2115_r + diag_out;
 
 // Audio SDRAM sync signals
 wire        sound_rd;
