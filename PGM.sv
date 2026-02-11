@@ -349,6 +349,7 @@ reg        sdram_ack_50;
 reg        vid_ack_50;
 reg        sound_ack_50;
 reg [63:0] sdram_buf;
+reg        ioctl_wr_pending;
 
 reg sound_rd_last; // Edge detection for audio
 always @(posedge fixed_50m_clk) sound_rd_last <= sound_rd_s2;
@@ -390,8 +391,10 @@ always @(posedge fixed_50m_clk) begin
         sdram_ack_50 <= 0;
         vid_ack_50 <= 0;
     end else if (ioctl_download) begin
-        // Passthrough total para el Loader
+        // Passthrough total para el Loader con Latch de escritura
         arb_state <= ARB_IDLE;
+        if (ioctl_wr && (ioctl_index == 8'h00)) ioctl_wr_pending <= 1;
+        else if (!ddram_busy) ioctl_wr_pending <= 0;
     end else begin
         case (arb_state)
             ARB_IDLE: begin
@@ -437,8 +440,7 @@ assign ddram_addr = ioctl_download ? {5'b0, ioctl_addr[26:3]} :
                     (arb_state == ARB_CPU)   ? {5'b0, adr[23:3]} : 
                     (arb_state == ARB_AUDIO) ? sound_addr : vid_addr;
                     
-assign ddram_we   = ioctl_download && ioctl_wr && (ioctl_index == 8'h00); 
-assign ddram_rd   = ioctl_download ? 1'b0 : 
+assign ddram_we   = ioctl_download ? (ioctl_wr || ioctl_wr_pending) && (ioctl_index == 8'h00) : 
                     (arb_state == ARB_CPU)   ? 1'b1 :
                     (arb_state == ARB_VIDEO) ? 1'b1 :
                     (arb_state == ARB_AUDIO) ? 1'b1 : 1'b0;
@@ -449,8 +451,8 @@ assign ddram_be   = ioctl_download ?
                      (ioctl_addr[2:1] == 2'd1) ? 8'h0C :
                      (ioctl_addr[2:1] == 2'd2) ? 8'h30 : 8'hC0) : 8'hFF;
 
-// Señal de espera: pausa al HPS si DDRAM está ocupada durante la carga
-assign ioctl_wait = ioctl_download & ddram_busy;
+// Señal de espera: pausa al HPS si DDRAM está ocupada o hay una escritura pendiente
+assign ioctl_wait = ioctl_download & (ddram_busy || ioctl_wr_pending);
 
 // El motor de video recibe los datos directamente del bus principal
 // Sincronizamos ddram_dout_ready para pgm_video? 
