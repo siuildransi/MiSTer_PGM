@@ -194,7 +194,7 @@ PGM pgm_core (
 );
 
 wire [7:0] led_diag;
-assign LED_USER = led_diag;
+// assign LED_USER = led_diag; // REMOVED (Conflicting driver)
 
 assign AUDIO_L = sample_l;
 assign AUDIO_R = sample_r;

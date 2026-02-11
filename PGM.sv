@@ -317,11 +317,7 @@ wire beep_io     = beep_cnt[13] & io_sel;    // ~3kHz tone during I/O access
 // Mantenemos el pitido durante el reset para confirmar que el audio funciona
 wire beep_z80 = beep_cnt[12] & z80_nmi_req & beep_cnt[22]; // ~6kHz tone modulated at ~6Hz (Chirp)
 
-wire [15:0] diag_raw = (beep_heartbeat ? 16'h1000 : 16'h0) +
-                       (beep_vblank    ? 16'h0800 : 16'h0) + 
-                       (beep_cpu       ? 16'h0800 : 16'h0) + 
-                       (beep_io        ? 16'h0800 : 16'h0) +
-                       (beep_z80       ? 16'h0800 : 16'h0);
+wire [15:0] diag_raw = 16'h0000; // Diagnostics disabled at user request
 
 wire [15:0] diag_out = ioctl_download ? 16'h0000 : diag_raw;
 
