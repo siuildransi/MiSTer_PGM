@@ -108,3 +108,32 @@ Toda la lógica I/O se decodifica en el bloque combinacional `always @(*)` de `P
 | `adr[15:1] == 15'h0001 && !lds_n` | `0xC00002` W | Escribe `sound_latch_1` + activa `z80_nmi_req` |
 
 > **⚠️ NOTA**: La escritura del latch activa automáticamente la NMI del Z80. El acknowledge (`z80_nmi_ack_8m`) se sincroniza desde 8MHz a 20MHz mediante un flip-flop de cruce de dominio (`z80_nmi_ack_20`). **NO eliminar** esta sincronización.
+
+## Chip de Protección IGS027A (ARM7 HLE)
+
+**Archivo**: `rtl/protection/igs027a_hle.sv`  
+**Dirección decodificada**: `prot_sel = (adr[23:16] == 8'h40)` (`0x400000 - 0x40FFFF`).
+
+Este módulo emula en alto nivel (HLE) las respuestas del coprocesador ARM7 (Type 3) utilizado en juegos como *Demon Front*. La comunicación se realiza mediante un handshake de registros.
+
+### Mapa de Registros (`0x400000`)
+
+| Dirección (68k) | Acceso | Función |
+| :--- | :--- | :--- |
+| `0x400000` | W | **Command Register**: Dispara el procesamiento HLE. |
+| `0x400000` | R | **Status Register**: Bit 0 indica Ready (1) o Busy (0). |
+| `0x400002` | R/W | **Data Register 0**: Parámetro de entrada / Respuesta de salida. |
+| `0x400004` | R/W | **Data Register 1** |
+| `0x400006` | R/W | **Data Register 2** |
+
+### Comandos HLE Soportados (Demon Front)
+
+| Comando | Función | Respuesta Esperada (`Data 0`) |
+| :--- | :--- | :--- |
+| `0x0011` | Inicialización / Check | `0x55AA` |
+| `0x0012` | Escritura RAM interna | Ack (Status = Done) |
+| `0x0013` | Lectura RAM interna | Dato almacenado |
+| `0x0014` | Transformación de Sprites | Bypass (Done) |
+
+> **⚠️ NOTA TÉCNICA**: El módulo `igs027a_hle` genera su propia señal `DTACK`. Al acceder al rango `0x400000`, el core delega el control de espera de la CPU a este módulo. Una falla en la lógica de `dtack_n` interna del módulo de protección colgará el core por completo.
+
