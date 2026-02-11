@@ -13,6 +13,11 @@ module PGM (
     input  [15:0] ioctl_dout,
     input  [7:0]  ioctl_index,
 
+    // Joysticks and Buttons
+    input  [31:0] joystick_0,
+    input  [31:0] joystick_1,
+    input  [15:0] joy_buttons,
+
     // DDRAM Interface (Shared by Video and Loader)
     output        ddram_rd,
     output        ddram_we,       // Added
@@ -50,6 +55,7 @@ wire ram_sel   = (adr[23:17] == 7'b1000000); // 800000 - 81FFFF (Work RAM)
 wire vram_sel  = (adr[23:17] == 7'b1001000); // 900000 - 907FFF (VRAM)
 wire pal_sel   = (adr[23:17] == 7'b1010000); // A00000 - A011FF (Palette)
 wire vreg_sel  = (adr[23:16] == 8'hB0);      // B00000 - B0FFFF (Registers)
+wire io_sel    = (adr[23:16] == 8'hC0);      // C00000 - C0FFFF (I/O, Sound Latch)
 
 // --- Main Work RAM (128KB = 64K words) via dpram_dc ---
 // Puerto A: CPU 68k (20MHz) - lectura/escritura
@@ -93,8 +99,50 @@ always @(*) begin
             // Paleta y VRAM en este core son BRAM instantánea
             cpu68k_dtack_n = 1'b0;
             // Din se maneja abajo en mux de lectura
+        end else if (io_sel) begin
+            cpu68k_dtack_n = 1'b0;
+            // Din se maneja abajo en mux de lectura
         end
     end
+end
+
+// Input Mapping Logic (Active Low)
+// PGM Register C08000: Player 1 (Low Byte), Player 2 (High Byte)
+// Bit Order (MAME/PGM): 0:UP, 1:DOWN, 2:LEFT, 3:RIGHT, 4:B1(A), 5:B2(B), 6:B3(C), 7:B4(D)
+wire [15:0] pgm_inputs = ~{
+    joystick_1[7], joystick_1[6], joystick_1[5], joystick_1[4], 
+    joystick_1[3], joystick_1[2], joystick_1[1], joystick_1[0], // P2
+    joystick_0[7], joystick_0[6], joystick_0[5], joystick_0[4], 
+    joystick_0[3], joystick_0[2], joystick_0[1], joystick_0[0]  // P1
+};
+
+// PGM Register C08004: System (Low Byte)
+// Bit Order: 0:Coin1, 1:Coin2, 2:Start1, 3:Start2, 4:Test, 5:Service...
+// MiSTer joystick_0[8] is usually Start, joystick_0[9] is Select (Coin)
+wire [15:0] pgm_system = ~{
+    8'h00, // High byte unused/reserved
+    4'b0000, 
+    joystick_1[8], joystick_0[8], // Start 2, Start 1
+    joystick_1[9], joystick_0[9]  // Coin 2, Coin 1
+};
+
+// Reading mux
+always @(*) begin
+    case (1'b1)
+        ram_sel:  cpu68k_din = {wram_rd_h, wram_rd_l};
+        bios_sel: cpu68k_din = sdram_data;
+        prom_sel: cpu68k_din = sdram_data;
+        vram_sel: cpu68k_din = vram_dout_vid; // Simplificado
+        pal_sel:  cpu68k_din = pal_dout_vid;  // Simplificado
+        io_sel: begin
+            case (adr[15:1])
+                16'h8000 >> 1: cpu68k_din = pgm_inputs;
+                16'h8004 >> 1: cpu68k_din = pgm_system;
+                default:      cpu68k_din = 16'hFFFF;
+            endcase
+        end
+        default:  cpu68k_din = 16'hFFFF;
+    endcase
 end
 
 fx68k main_cpu (

@@ -93,9 +93,15 @@ wire [15:0] ioctl_dout;
 wire [7:0]  ioctl_index;
 wire [31:0] status;
 
+// --- PGM Core (minimal — CPUs only) ---
+wire [15:0] sample_l, sample_r;
+wire [31:0] joy0, joy1;
+
 hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;")) hps_io (
     .clk_sys(CLK_50M),
     .HPS_BUS(HPS_BUS),
+    .joystick_0(joy0),
+    .joystick_1(joy1),
     .ioctl_download(ioctl_download),
     .ioctl_wr(ioctl_wr),
     .ioctl_addr(ioctl_addr),
@@ -104,52 +110,22 @@ hps_io #(.CONF_STR("P,PGM.rbf;O12,Scandoubler,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;
     .status(status)
 );
 
-// --- Clocks ---
-// PLL generates 25.175MHz video clock from 50MHz input.
-// CLK_VIDEO must be a PLL output (Quartus requirement for clock switches).
-wire clk_vid;
-wire pll_locked;
-
-pll vid_pll (
-    .refclk(CLK_50M),
-    .rst(1'b0),
-    .outclk_0(clk_vid),
-    .locked(pll_locked)
-);
-
-assign CLK_VIDEO = clk_vid;
-assign CE_PIXEL  = 1'b1;      // Every PLL clock cycle is a pixel
-assign VGA_SL    = 2'b00;     // No scanlines
-assign VIDEO_ARX = 13'd4;     // 4:3 aspect ratio
-assign VIDEO_ARY = 13'd3;
-
-// --- CPU Clocks ---
-// 68k: ~20 MHz (50/2 = 25, close enough for skeleton)
-wire clk_20m;
-reg [1:0] div20;
-always @(posedge CLK_50M) div20 <= div20 + 2'd1;
-assign clk_20m = div20[1];
-
-// Z80: ~8 MHz (50/6 ≈ 8.3 MHz)
-wire clk_8m;
-reg [2:0] div8;
-always @(posedge CLK_50M) div8 <= div8 + 3'd1;
-assign clk_8m = div8[2];
-
-// --- PGM Core (minimal — CPUs only) ---
-wire [15:0] sample_l, sample_r;
-
 PGM pgm_core (
     .fixed_20m_clk(clk_20m),
     .fixed_8m_clk(clk_8m),
     .fixed_50m_clk(CLK_50M),
     .video_clk(clk_vid),
-    .reset(RESET || ioctl_download),
+    .reset(RESET || ioctl_download || status[0]),
     .ioctl_download(ioctl_download),
     .ioctl_wr(ioctl_wr),
     .ioctl_addr(ioctl_addr),
     .ioctl_dout(ioctl_dout),
     .ioctl_index(ioctl_index),
+    
+    // Joystick/Buttons
+    .joystick_0(joy0),
+    .joystick_1(joy1),
+    .joy_buttons(status[15:0]),
     
     // DDRAM Interface
     .ddram_rd(DDRAM_RD),
