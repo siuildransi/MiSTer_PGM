@@ -2,28 +2,29 @@
 
 El sistema de sonido utiliza una arquitectura secundaria basada en un procesador Zilog Z80 y un sintetizador Wavetable ICS2115.
 
-## Estructura de Control (Z80)
-- **Reloj**: 8.468 MHz.
-- **Memoria**: 64KB de RAM local cargada a través del puerto `ioctl` (Index 1).
-- **Entradas/Salidas**:
-    - **Port 0x00**: Lectura del Latch 1 (Comandos de la 68k) / Escritura al Latch 2 (Estado del Z80).
-    - **Port 0x8000-0x8003**: Interfaz de control del chip ICS2115.
+## Arquitectura del Mezclador TDM (Time Division Multiplexing)
+Debido a la alta polifonía (32 voces) y para optimizar los recursos de la FPGA, el módulo `ics2115.sv` utiliza un motor de mezcla por división de tiempo:
+- **Ciclo de Mezcla**: En cada intervalo de muestreo (~33kHz), el motor recorre secuencialmente las voces de la 0 a la 31.
+- **Estados de Voz**: Una FSM interna gestiona cuatro estados por voz:
+    - `TDM_IDLE`: Reinicio de acumuladores y comprobación de activación.
+    - `TDM_FETCH`: Solicitud de ráfaga a la SDRAM externa.
+    - `TDM_MIX`: Acumulación del valor de 16 bits en un sumador de 24 bits.
+    - `TDM_FINISH`: Aplicación de saturación aritmética para evitar distorsión (clipping).
 
-## Comunicación Inter-CPU (Sound Latches)
+## Protocolo de Interrupciones NMI (Handshake)
+Para asegurar una baja latencia en los comandos de sonido, se ha implementado un sistema de interrupción no enmascarable (NMI):
+1. **Trigger**: Cuando la CPU 68k escribe en el registro `0xC00002` (Sound Latch 1), el hardware genera un pulso `NMI_n` al Z80.
+2. **Respuesta**: El Z80 salta a la dirección `0x0066` y lee el puerto I/O `0x00`.
+3. **Ack**: Al leer el puerto `0x00`, el hardware limpia automáticamente la petición de NMI, permitiendo recibir el siguiente comando.
 
-| Dirección 68k | Dirección Z80 | Función |
-| :--- | :--- | :--- |
-| `0xC00002` (W) | `I/O 0x00` (R) | **Sound Latch 1**: Comandos enviados por el juego. |
-| `0xC00004` (R) | `I/O 0x00` (W) | **Sound Latch 2**: Respuesta de estado del Z80. |
+## Mapa de Registros del ICS2115
+El acceso se realiza de forma indirecta mediante dos puertos físicos:
+- **Puertos Físicos**: `0x8000` (Dirección) y `0x8001` (Datos).
+- **Registros Indirectos Clave**:
+    - `0x08`: Selección de Voz (0-31). Las operaciones posteriores afectarán a la voz elegida aquí.
+    - `0x40`: Control de Voz (Bit 0: Play/Stop).
+    - `0x41-0x43`: Dirección de inicio de muestra (24 bits).
+    - `0x44-0x45`: Incremento de fase (Frecuencia/Pitch).
 
-## Sintetizador ICS2115 (Wavetable MIDI)
-- Soporta hasta **32 voces polifónicas**.
-- Cada voz puede leer muestras PCM de la SDRAM externa.
-- La comunicación Z80 <-> ICS2115 es de 8 bits a través de puertos I/O.
-- El módulo `ics2115.sv` utiliza el canal `ARB_AUDIO` del árbitro de SDRAM para precargar muestras en buffers locales.
-
-## Flujo de Audio
-1. La 68k escribe un ID de sonido en `C00002`.
-2. El Z80 lee el ID, busca la configuración de voz en su RAM.
-3. El Z80 programa el ICS2115 con la dirección de la muestra y frecuencia.
-4. El ICS2115 solicita datos a la SDRAM y genera la señal estéreo de 16 bits.
+## Gestión de Memoria de Muestras (SDRAM)
+El chip de sonido tiene prioridad baja en el árbitro de SDRAM (`ARB_AUDIO`). Utiliza lecturas de ráfaga (64 bits) que contienen múltiples muestras comprimidas o empaquetadas, minimizando el impacto en el ancho de banda del sistema de vídeo.

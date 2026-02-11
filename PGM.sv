@@ -1,9 +1,9 @@
 module PGM (
     // Clocks
-    input         fixed_20m_clk,
-    input         fixed_8m_clk,
-    input         fixed_50m_clk,  // Added for SDRAM
-    input         video_clk,     // ~25 MHz for Video Timing
+    input         fixed_20m_clk,  // Dominio CPU 68k (8.468MHz ~ 20MHz en este core)
+    input         fixed_8m_clk,   // Dominio CPU Z80 (8.468MHz)
+    input         fixed_50m_clk,  // Dominio Árbitro SDRAM
+    input         video_clk,      // Dominio Motor Video (~25.17 MHz)
     input         reset,
 
     // MiSTer ioctl interface
